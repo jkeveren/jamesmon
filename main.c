@@ -39,6 +39,11 @@ int readIntFile(char *path) {
 		return INT_MIN;
 	}
 
+	n = fclose(file);
+	if (n == EOF) {
+		return INT_MIN;
+	}
+
 	return value;
 }
 
@@ -83,13 +88,17 @@ int printBattery(DIR *PSDir) {
 	int batFound = 0; // Indicates whether any batteries are found.
 	int ACConnected = 0;
 
-	// Find batteries in "/sys/class/power_supply" directory.
+	// Rewind directory stream.
+	rewinddir(PSDir);
+
+	// Find entries in "/sys/class/power_supply" directory.
 	for (
 		struct dirent *entry = readdir(PSDir);
 		entry != NULL;
 		entry = readdir(PSDir)
 	) {
 		char *name = entry->d_name;
+
 		// Check if AC is connected.
 		if (strcmp(name, "AC") == 0) {
 			int online = readIntFile("/sys/class/power_supply/AC/online");
@@ -99,6 +108,7 @@ int printBattery(DIR *PSDir) {
 			ACConnected = online;
 			continue;
 		}
+		
 		// Skip non-batteries.
 		if (strncmp(name, "BAT", 3) != 0) {
 			continue;
@@ -152,6 +162,9 @@ int printBattery(DIR *PSDir) {
 		char format[100] = "%d: %.2fV %.2fA %05.2fW %05.1f/%03.fkj %03.f%%";
 		if (!ACConnected && power > 0) {
 			strcat(format, " %04.1fks");
+		} else {
+			// Overwrite potential text from last frame 
+			strcat(format, "        ");
 		}
 		strcat(format, "\n");
 		
@@ -183,19 +196,27 @@ int printBattery(DIR *PSDir) {
 // 	EntryTypeOther,
 // };
 
+int readIntFD(int fd) {
+		// Seek to begining of file from previos reads.
+		lseek(fd, 0, SEEK_SET);
+
+		// Read file
+		int l = 256;
+		char buf[l];
+		int n = read(fd, buf, l);
+		if (n == -1) {
+			return 1;
+		}
+		return atoi(buf);
+}
+
 int printCPU(int *freqFDs, int nprocs) {
 	printf("CPU:\n");
 	int maxFreq = 0;
 
 	for (int i = 0; i < nprocs; i++) {
-		int l = 20;
-		char buf[l];
 
-		int n = read(freqFDs[i], buf, l);
-		if (n == -1) {
-			return 1;
-		}
-		int freq = atoi(buf);
+		int freq = readIntFD(freqFDs[i]);
 		
 		// Update maxFreq
 		if (freq > maxFreq) {
@@ -279,14 +300,6 @@ int printCPU(int *freqFDs, int nprocs) {
 }
 
 int main() {
-	// Get file descriptors for reuse once monitoring is implemented.
-	// char *path = "/proc/stat";
-	// int procStatFD = open(path, O_RDONLY);
-	// if (procStatFD == -1) {
-	// 	printf("Unable to open %s\n", path);
-	// 	return 1;
-	// }
-
 	// Processor frequency file descriptors
 	int nprocs = get_nprocs();
 	int freqFDs[nprocs];
@@ -309,19 +322,34 @@ int main() {
 		return 1;
 	}
 
-	// Print each section
-	printTime();
+	const int refreshRate = 20; // Hz
+	const int interval = 1e6 / refreshRate; // us
 
-	int e = printBattery(PSDir);
-	if (e != 0) {
-		perror(NULL);
-		return 1;
-	}
+	// Clear terminal
+	printf("\e[1;1H\e[2J");
+	while (1) {
+		// go to 0, 0
+		printf("\033[1;1H"); 
 
-	e = printCPU(freqFDs, nprocs);
-	if (e != 0) {
-		perror(NULL);
-		return 1;
+		// Print each section
+		printTime();
+
+		int e = printBattery(PSDir);
+		if (e != 0) {
+			perror(NULL);
+			return 1;
+		}
+
+		e = printCPU(freqFDs, nprocs);
+		if (e != 0) {
+			perror(NULL);
+			return 1;
+		}
+
+		printTime();
+
+		// Very dumb sleep. Should really calc remaining interval time
+		usleep(interval);
 	}
 
 	return 0;
