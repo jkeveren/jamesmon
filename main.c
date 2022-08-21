@@ -20,9 +20,29 @@ void printTime() {
 
 	struct tm *lt = localtime(&tv.tv_sec);
 	char format[maxLength];
-	strftime(format, maxLength, "%F %a %d %b %T.%%03d\n\n", lt);
+	strftime(format, maxLength, "%F %a %d %b %T.%%03d\n", lt);
 
 	printf(format, tv.tv_usec/1000);
+}
+
+int printUptime(int uptimeFD) {
+	// Seek to start of file.
+	lseek(uptimeFD, 0, SEEK_SET);
+
+	// Read entire file.
+	unsigned char l = 255;
+	char buf[l];
+	int n = read(uptimeFD, buf, l);
+	if (n == -1) {
+		return 1;
+	}
+
+	// Parse first number
+	double uptime = atof(buf); // s
+
+	printf("Up: %.1es (%.ed)\n\n", uptime, uptime/60/60/24);
+
+	return 0;
 }
 
 int readIntFile(char *path) {
@@ -162,9 +182,6 @@ int printBattery(DIR *PSDir) {
 		char format[100] = "%d: %.2fV %.2fA %05.2fW %05.1f/%03.fkj %03.f%%";
 		if (!ACConnected && power > 0) {
 			strcat(format, " %04.1fks");
-		} else {
-			// Overwrite potential text from last frame 
-			strcat(format, "        ");
 		}
 		strcat(format, "\n");
 		
@@ -300,56 +317,74 @@ int printCPU(int *freqFDs, int nprocs) {
 }
 
 int main() {
-	// Processor frequency file descriptors
-	int nprocs = get_nprocs();
-	int freqFDs[nprocs];
-
-	// Open CPU frequency files.
-	for (int i = 0; i < nprocs; i++) {
-		char path[256];
-		int n = sprintf(path, "/sys/devices/system/cpu/cpufreq/policy%d/scaling_cur_freq", i, "cur");
-		if (n < 0) {
-			perror(NULL);
-			return 1;
-		}
-		freqFDs[i] = open(path, O_RDONLY);
+	// Open uptime file
+	int uptimeFD = open("/proc/uptime", O_RDONLY);
+	if (uptimeFD == -1) {
+		perror("NULL");
+		return 1;
 	}
 
 	// Open power supply directory
 	DIR *PSDir = opendir("/sys/class/power_supply");
 	if (PSDir == NULL) {
 		perror(NULL);
-		return 1;
+		return 2;
 	}
 
-	const int refreshRate = 20; // Hz
+	// Get processor frequency FDs
+	int nprocs = get_nprocs();
+	int freqFDs[nprocs];
+	for (int i = 0; i < nprocs; i++) {
+		char path[256];
+		int n = sprintf(path, "/sys/devices/system/cpu/cpufreq/policy%d/scaling_cur_freq", i, "cur");
+		if (n < 0) {
+			perror(NULL);
+			return 3;
+		}
+		freqFDs[i] = open(path, O_RDONLY);
+		if (freqFDs[i] == -1) {
+			perror("NULL");
+			return 4;
+		}
+	}
+
+	const int refreshRate = 60; // Hz
 	const int interval = 1e6 / refreshRate; // us
 
 	// Clear terminal
-	printf("\e[1;1H\e[2J");
-	while (1) {
+	// printf("\e[1;1H\e[2J");
+	for (int i = refreshRate;; i++) {
+		// Clear the terminal every second
+		if (i == refreshRate) {
+			i = 0;
+			printf("\e[2J");
+		}
 		// go to 0, 0
-		printf("\033[1;1H"); 
+		printf("\033[1;1H");
 
 		// Print each section
 		printTime();
 
-		int e = printBattery(PSDir);
-		if (e != 0) {
+		int e = printUptime(uptimeFD);
+		if (e == 1) {
 			perror(NULL);
-			return 1;
+			return 5;
+		}
+
+		e = printBattery(PSDir);
+		if (e == 1) {
+			perror(NULL);
+			return 5;
 		}
 
 		e = printCPU(freqFDs, nprocs);
-		if (e != 0) {
+		if (e == 1) {
 			perror(NULL);
-			return 1;
+			return 6;
 		}
 
-		printTime();
-
-		// Very dumb sleep. Should really calc remaining interval time
-		usleep(interval);
+		// Very dumb sleep. Should really calc remaining interval time.
+		usleep(interval-1);
 	}
 
 	return 0;
