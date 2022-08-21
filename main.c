@@ -40,7 +40,7 @@ int printUptime(int uptimeFD) {
 	// Parse first number
 	double uptime = atof(buf); // s
 
-	printf("Up: %.1es (%.ed)\n\n", uptime, uptime/60/60/24);
+	printf("Up: %.1es (%.1fd)\n\n", uptime, uptime/60/60/24);
 
 	return 0;
 }
@@ -316,22 +316,72 @@ int printCPU(int *freqFDs, int nprocs) {
 	return 0;
 }
 
-int main() {
-	// Open uptime file
+int printAll(int uptimeFD, DIR *PSDir, int *freqFDs, int nprocs) {
+	printTime();
+
+	int e = printUptime(uptimeFD);
+	if (e == 1) {
+		perror(NULL);
+		return 5;
+	}
+
+	e = printBattery(PSDir);
+	if (e == 1) {
+		perror(NULL);
+		return 5;
+	}
+
+	e = printCPU(freqFDs, nprocs);
+	if (e == 1) {
+		perror(NULL);
+		return 6;
+	}
+}
+
+int main(int argc, char *argv[]) {
+	// Parse arguments.
+	int refreshRate = 0;
+	char opt;
+	while ((opt = getopt(argc, argv, "r:h")) != -1) {
+		if (opt == '?') {
+			return 7;
+		}
+		switch (opt) {
+			case 'r':
+				char *endP;
+				refreshRate = strtol(optarg, &endP, 10);
+				printf("%p, %p, %d\n", endP, optarg, endP == optarg);
+				if (refreshRate == LONG_MIN || refreshRate == LONG_MAX) {
+					perror(NULL);
+					return 8;
+				} else if (endP == optarg) {
+					fprintf(stderr, "Refresh rate requires a number but got \"%s\".\n", optarg);
+					return 9;
+				}
+				printf("%d\n", refreshRate);
+				break;
+			case 'h':
+				printf("Usage: syspector [-r <refresh-rate (Hz)>]\n");
+				return 9;
+				break;
+		}
+	}
+
+	// Open uptime file.
 	int uptimeFD = open("/proc/uptime", O_RDONLY);
 	if (uptimeFD == -1) {
 		perror("NULL");
 		return 1;
 	}
 
-	// Open power supply directory
+	// Open power supply directory.
 	DIR *PSDir = opendir("/sys/class/power_supply");
 	if (PSDir == NULL) {
 		perror(NULL);
 		return 2;
 	}
 
-	// Get processor frequency FDs
+	// Get processor frequency FDs.
 	int nprocs = get_nprocs();
 	int freqFDs[nprocs];
 	for (int i = 0; i < nprocs; i++) {
@@ -348,43 +398,33 @@ int main() {
 		}
 	}
 
-	const int refreshRate = 60; // Hz
-	const int interval = 1e6 / refreshRate; // us
-
-	// Clear terminal
-	// printf("\e[1;1H\e[2J");
-	for (int i = refreshRate;; i++) {
-		// Clear the terminal every second
-		if (i == refreshRate) {
-			i = 0;
-			printf("\e[2J");
-		}
-		// go to 0, 0
-		printf("\033[1;1H");
-
-		// Print each section
-		printTime();
-
-		int e = printUptime(uptimeFD);
-		if (e == 1) {
+	if (refreshRate == 0) {
+		int e = printAll(uptimeFD, PSDir, freqFDs, nprocs);
+		if (e != 0) {
 			perror(NULL);
-			return 5;
+			return e;
 		}
+	} else {
+		const int interval = 1e6 / refreshRate; // us
+		// Clear terminal.
+		for (int i = refreshRate;; i++) {
+			// Clear the terminal every second
+			if (i == refreshRate) {
+				i = 0;
+				printf("\e[2J");
+			}
+			// go to 0, 0
+			printf("\033[1;1H");
 
-		e = printBattery(PSDir);
-		if (e == 1) {
-			perror(NULL);
-			return 5;
+			int e = printAll(uptimeFD, PSDir, freqFDs, nprocs);
+			if (e != 0) {
+				perror(NULL);
+				return e;
+			}
+
+			// Very dumb sleep. Should really calc remaining interval time.
+			usleep(interval);
 		}
-
-		e = printCPU(freqFDs, nprocs);
-		if (e == 1) {
-			perror(NULL);
-			return 6;
-		}
-
-		// Very dumb sleep. Should really calc remaining interval time.
-		usleep(interval-1);
 	}
 
 	return 0;
