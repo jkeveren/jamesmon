@@ -6,10 +6,12 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/sysinfo.h>
-#include <errno.h>
 #include <dirent.h>
 #include <float.h>
+#include <limits.h>
+#include <stdarg.h>
 
+// Prints time section
 void printTime() {
 	const int maxLength = 40;
 
@@ -23,33 +25,50 @@ void printTime() {
 	printf(format, tv.tv_usec/1000);
 }
 
-float readEnergyFile(char *fmt, char *state) {
+int readIntFile(char *path) {
+	// Open file
+	FILE *file = fopen(path, "r");
+	if (file == NULL) {
+		return INT_MIN;
+	}
+
+	// Fead file
+	int value;
+	int n = fscanf(file, "%d", &value);
+	if (n == EOF) {
+		return INT_MIN;
+	}
+
+	return value;
+}
+
+// Reads energy in Wh from file and returns energy in kj.
+float readBatteryFile(int batIndex, char *fileName) {
 	// Format path
-	char path[100];
-	int n = sprintf(path, fmt, state);
+	char path[256];
+	int n = sprintf(path, "/sys/class/power_supply/BAT%d/%s", batIndex, fileName);
 	if (n < 0) {
 		return FLT_MAX;
 	}
 
-	// Open file
-	FILE *file = fopen(path, "r");
-	if (file == NULL) {
-		return FLT_MAX;
-	}
-
-	// Fead file
-	float uWh; // Micro Watt Hours
-	n = fscanf(file, "%f", &uWh);
-	if (n == EOF) {
+	int value = readIntFile(path);
+	if (value == INT_MIN) {
 		return FLT_MAX;
 	}
 	
-	// Convert to kj
-	float kj = uWh*3600/1e9;
+	// Convert to base unit.
+	float SIBaseValue = (float)value/1e6;
 
-	return kj;
+	return SIBaseValue;
 }
 
+float readEnergyFile(int batIndex, char *fileName) {
+	float energy = readBatteryFile(batIndex, fileName);
+	// convert Wh to j.
+	return energy*3600;
+}
+
+// Prints battery section
 int printBattery(DIR *PSDir) {
 	/*
 		bats array
@@ -57,11 +76,12 @@ int printBattery(DIR *PSDir) {
 		- 1 for found, 0 for not found.
 		- Very simple and efficient sorting technique.
 	*/
-	int maxBats = 255;
+	int maxBats = 256;
 	int bats[maxBats];
 	memset(bats, 0, maxBats);
 	int highestBat = 0; // highest index of all batteries that are found.
 	int batFound = 0; // Indicates whether any batteries are found.
+	int ACConnected = 0;
 
 	// Find batteries in "/sys/class/power_supply" directory.
 	for (
@@ -70,7 +90,16 @@ int printBattery(DIR *PSDir) {
 		entry = readdir(PSDir)
 	) {
 		char *name = entry->d_name;
-		// Skip non-batteries
+		// Check if AC is connected.
+		if (strcmp(name, "AC") == 0) {
+			int online = readIntFile("/sys/class/power_supply/AC/online");
+			if (online == INT_MAX) {
+				return 1;
+			}
+			ACConnected = online;
+			continue;
+		}
+		// Skip non-batteries.
 		if (strncmp(name, "BAT", 3) != 0) {
 			continue;
 		}
@@ -89,7 +118,7 @@ int printBattery(DIR *PSDir) {
 
 	// Print heading.
 	if (batFound) {
-		printf("Battery:\n");
+		printf("Battery:\n", ACConnected);
 	}
 
 	// Print stats for each battery.
@@ -99,29 +128,45 @@ int printBattery(DIR *PSDir) {
 			continue;
 		}
 
-		// Create a path format string for battery. (note the "%%s" at the end fo the initial format string).
-		char fmt[100];
-		int n = sprintf(fmt, "/sys/class/power_supply/BAT%d/energy_%%s", batIndex);
-		if (n < 0) {
+		// Read files
+		// Energy
+		float energyNow = readEnergyFile(batIndex, "energy_now");
+		if (energyNow == FLT_MAX) {
+			return 1;
+		}
+		float energyFull = readEnergyFile(batIndex, "energy_full");
+		if (energyFull == FLT_MAX) {
+			return 1;
+		}
+		// Power
+		float power = readBatteryFile(batIndex, "power_now");
+		if (power == FLT_MAX) {
+			return 1;
+		}
+		// Voltage
+		float voltage = readBatteryFile(batIndex, "voltage_now");
+		if (voltage == FLT_MAX) {
 			return 1;
 		}
 
-		// Read each energy file.
-		float kjNow = readEnergyFile(fmt, "now");
-		if (kjNow == FLT_MAX) {
-			return 1;
+		char format[100] = "%d: %.2fV %.2fA %05.2fW %05.1f/%03.fkj %03.f%%";
+		if (!ACConnected && power > 0) {
+			strcat(format, " %04.1fks");
 		}
-		float kjFull = readEnergyFile(fmt, "full");
-		if (kjFull == FLT_MAX) {
-			return 1;
-		}
-		float kjDesign = readEnergyFile(fmt, "full_design");
-		if (kjDesign == FLT_MAX) {
-			return 1;
-		}
+		strcat(format, "\n");
 		
 		// Print battery line.
-		printf("%d: %06.2f/%05.1f/%05.1fkj (%06.2f%%)\n", batIndex, kjNow, kjFull, kjDesign, 100/kjFull*kjNow);
+		printf(
+			format,
+			batIndex,
+			voltage,
+			power/voltage, // Current
+			power,
+			energyNow/1000,
+			energyFull/1000,
+			100/energyFull*energyNow,
+			energyNow/power/1000
+		);
 	}
 
 	// Padding
@@ -140,30 +185,27 @@ int printBattery(DIR *PSDir) {
 
 int printCPU(int *freqFDs, int nprocs) {
 	printf("CPU:\n");
-	for (int pi = 0, fdi = 0; pi < nprocs; pi++, fdi += 3) {
+	int maxFreq = 0;
+
+	for (int i = 0; i < nprocs; i++) {
 		int l = 20;
 		char buf[l];
 
-		int n = read(freqFDs[fdi], buf, l);
+		int n = read(freqFDs[i], buf, l);
 		if (n == -1) {
 			return 1;
 		}
-		int min = strtol(buf, NULL, 10);
-
-		n = read(freqFDs[fdi + 1], buf, l);
-		if (n == -1) {
-			return 1;
+		int freq = atoi(buf);
+		
+		// Update maxFreq
+		if (freq > maxFreq) {
+			maxFreq = freq;
 		}
-		int max = strtol(buf, NULL, 10);
 
-		n = read(freqFDs[fdi + 2], buf, l);
-		if (n == -1) {
-			return 1;
-		}
-		int cur = strtol(buf, NULL, 10);
-
-		printf("%.1f/%.1f/%.1fGHz\n", min/1e6, cur/1e6, max/1e6);
+		printf("%3d %.1fGHz\n", i, freq/1e6);
 	}
+
+	printf("max %.1fGHz\n", maxFreq/1e6);
 
 	// /proc/stat stuff. Commenting out for now. Focusing on instantationus info.
 	// int uh = sysconf(_SC_CLK_TCK);
@@ -236,23 +278,6 @@ int printCPU(int *freqFDs, int nprocs) {
 	return 0;
 }
 
-int printAll(DIR *PSDir,int *freqFDs, int nprocs) {
-	printTime();
-
-	int e = printBattery(PSDir);
-	if (e != 0) {
-		return 1;
-	}
-
-	e = printCPU(freqFDs, nprocs);
-	if (e != 0) {
-		return 1;
-	}
-
-	// USE sysfs for everything but CPU!
-	return 0;
-}
-
 int main() {
 	// Get file descriptors for reuse once monitoring is implemented.
 	// char *path = "/proc/stat";
@@ -264,50 +289,40 @@ int main() {
 
 	// Processor frequency file descriptors
 	int nprocs = get_nprocs();
-	int freqFDs[nprocs * 3];
+	int freqFDs[nprocs];
 
-	int l = 50; // Allocated path length
-	char *format = "/sys/devices/system/cpu/cpufreq/policy%d/scaling_%s_freq";
-
-	for (int pi = 0, fdi = 0; pi < nprocs; pi++, fdi += 3) {
-		// Min
-		char minPath[l];
-		int n = sprintf(minPath, format, pi, "min");
+	// Open CPU frequency files.
+	for (int i = 0; i < nprocs; i++) {
+		char path[256];
+		int n = sprintf(path, "/sys/devices/system/cpu/cpufreq/policy%d/scaling_cur_freq", i, "cur");
 		if (n < 0) {
 			perror(NULL);
 			return 1;
 		}
-		freqFDs[fdi] = open(minPath, O_RDONLY);
-
-		// Max
-		char maxPath[l];
-		n = sprintf(maxPath, format, pi, "max");
-		if (n < 0) {
-			perror(NULL);
-			return 1;
-		}
-		freqFDs[fdi + 1] = open(maxPath, O_RDONLY);
-
-		// Current
-		char curPath[l];
-		n = sprintf(curPath, format, pi, "cur");
-		if (n < 0) {
-			perror(NULL);
-			return 1;
-		}
-		freqFDs[fdi + 2] = open(curPath, O_RDONLY);
+		freqFDs[i] = open(path, O_RDONLY);
 	}
 
-	// Get list of power supplies
+	// Open power supply directory
 	DIR *PSDir = opendir("/sys/class/power_supply");
 	if (PSDir == NULL) {
+		perror(NULL);
 		return 1;
 	}
 
-	int e = printAll(PSDir, freqFDs, nprocs);
+	// Print each section
+	printTime();
+
+	int e = printBattery(PSDir);
 	if (e != 0) {
 		perror(NULL);
 		return 1;
 	}
+
+	e = printCPU(freqFDs, nprocs);
+	if (e != 0) {
+		perror(NULL);
+		return 1;
+	}
+
 	return 0;
 }
