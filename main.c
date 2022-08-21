@@ -20,7 +20,7 @@ void printTime() {
 
 	struct tm *lt = localtime(&tv.tv_sec);
 	char format[maxLength];
-	strftime(format, maxLength, "%F %a %d %b %T.%%03d\n", lt);
+	strftime(format, maxLength, "%F %b %a %T.%%03d\n", lt);
 
 	printf(format, tv.tv_usec/1000);
 }
@@ -207,12 +207,6 @@ int printBattery(DIR *PSDir) {
 	return 0;
 }
 
-// enum EntryType {
-// 	EntryTypeCPU,
-// 	EntryTypeCPUN,
-// 	EntryTypeOther,
-// };
-
 int readIntFD(int fd) {
 		// Seek to begining of file from previos reads.
 		lseek(fd, 0, SEEK_SET);
@@ -226,6 +220,12 @@ int readIntFD(int fd) {
 		}
 		return atoi(buf);
 }
+
+// enum EntryType {
+// 	EntryTypeCPU,
+// 	EntryTypeCPUN,
+// 	EntryTypeOther,
+// };
 
 int printCPU(int *freqFDs, int nprocs) {
 	printf("CPU:\n");
@@ -340,17 +340,20 @@ int printAll(int uptimeFD, DIR *PSDir, int *freqFDs, int nprocs) {
 
 int main(int argc, char *argv[]) {
 	// Parse arguments.
-	int refreshRate = 0;
+	float refreshRate = 0;
 	char opt;
 	while ((opt = getopt(argc, argv, "r:h")) != -1) {
 		if (opt == '?') {
 			return 7;
 		}
 		switch (opt) {
+			case 'h':
+				printf("Usage: syspector [-r <refresh-rate (Hz)>]\n");
+				return 9;
+				break;
 			case 'r':
 				char *endP;
-				refreshRate = strtol(optarg, &endP, 10);
-				printf("%p, %p, %d\n", endP, optarg, endP == optarg);
+				refreshRate = strtof(optarg, &endP);
 				if (refreshRate == LONG_MIN || refreshRate == LONG_MAX) {
 					perror(NULL);
 					return 8;
@@ -358,11 +361,6 @@ int main(int argc, char *argv[]) {
 					fprintf(stderr, "Refresh rate requires a number but got \"%s\".\n", optarg);
 					return 9;
 				}
-				printf("%d\n", refreshRate);
-				break;
-			case 'h':
-				printf("Usage: syspector [-r <refresh-rate (Hz)>]\n");
-				return 9;
 				break;
 		}
 	}
@@ -423,7 +421,7 @@ int main(int argc, char *argv[]) {
 			}
 
 			// Very dumb sleep. Should really calc remaining interval time.
-			usleep(interval);
+			usleep(interval - 10); // -10 to account for approx running time.
 		}
 	}
 
