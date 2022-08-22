@@ -67,7 +67,6 @@ int readIntFile(char *path) {
 	return value;
 }
 
-// Reads energy in Wh from file and returns energy in kj.
 float readBatteryFile(int batIndex, char *fileName) {
 	// Format path
 	char path[256];
@@ -227,23 +226,52 @@ int readIntFD(int fd) {
 // 	EntryTypeOther,
 // };
 
-int printCPU(int *freqFDs, int nprocs) {
+int printCPU(int nprocs, int *freqFDs, int *freqMins, int *freqMaxs) {
 	printf("CPU:\n");
-	int maxFreq = 0;
+	int highestCur = 0;
+
+	char *levels[] = {
+		// Shading
+		// " ",
+		// "\u2591",
+		// "\u2592",
+		// "\u2593",
+		// "\u2588"
+
+		// Left block
+		// " ",
+		"\u258F",
+		"\u258E",
+		"\u258D",
+		"\u258C",
+		"\u258B",
+		"\u258A",
+		"\u2589",
+		"\u2588"
+	};
+
+	int maxLevel = sizeof(levels) / sizeof(levels[0]);
 
 	for (int i = 0; i < nprocs; i++) {
-
-		int freq = readIntFD(freqFDs[i]);
+		int cur = readIntFD(freqFDs[i]);
+		int min = freqMins[i];
+		int max = freqMaxs[i];
+		float range = max - min;
 		
 		// Update maxFreq
-		if (freq > maxFreq) {
-			maxFreq = freq;
+		if (cur > highestCur) {
+			highestCur = cur;
 		}
 
-		printf("%3d %.1fGHz\n", i, freq/1e6);
+		int level = maxLevel/range*(cur-min);
+		if (level < 0) {
+			level = 0;
+		}
+
+		printf("%3d %.1fGhz %s\n", i, cur/1e6, levels[level]);
 	}
 
-	printf("max %.1fGHz\n", maxFreq/1e6);
+	printf("max %.1fGHz\n", highestCur/1e6);
 
 	// /proc/stat stuff. Commenting out for now. Focusing on instantationus info.
 	// int uh = sysconf(_SC_CLK_TCK);
@@ -316,7 +344,7 @@ int printCPU(int *freqFDs, int nprocs) {
 	return 0;
 }
 
-int printAll(int uptimeFD, DIR *PSDir, int *freqFDs, int nprocs) {
+int printAll(int uptimeFD, DIR *PSDir, int nprocs, int *freqFDs, int *freqMins, int *freqMaxs) {
 	printTime();
 
 	int e = printUptime(uptimeFD);
@@ -331,11 +359,28 @@ int printAll(int uptimeFD, DIR *PSDir, int *freqFDs, int nprocs) {
 		return 5;
 	}
 
-	e = printCPU(freqFDs, nprocs);
+	e = printCPU(nprocs, freqFDs, freqMins, freqMaxs);
 	if (e == 1) {
 		perror(NULL);
 		return 6;
 	}
+}
+
+int readCPUFrequencyFile(int cpu, char *limitName) {
+	// Format path
+	char path[256];
+	int n = sprintf(path, "/sys/devices/system/cpu/cpufreq/policy%d/scaling_%s_freq", cpu, limitName);
+	if (n < 0) {
+		return INT_MAX;
+	}
+
+	// Read file.
+	int freq = readIntFile(path);
+	if (freq == INT_MAX) {
+		return INT_MAX;
+	}
+
+	return freq;
 }
 
 int main(int argc, char *argv[]) {
@@ -379,12 +424,16 @@ int main(int argc, char *argv[]) {
 		return 2;
 	}
 
-	// Get processor frequency FDs.
+	// Get processor frequency FDs and min/max.
 	int nprocs = get_nprocs();
 	int freqFDs[nprocs];
+	int freqMins[nprocs];
+	int freqMaxs[nprocs];
+	char *basePath = "";
 	for (int i = 0; i < nprocs; i++) {
+		// Get "scaling_cur_freq" FD
 		char path[256];
-		int n = sprintf(path, "/sys/devices/system/cpu/cpufreq/policy%d/scaling_cur_freq", i, "cur");
+		int n = sprintf(path, "/sys/devices/system/cpu/cpufreq/policy%d/scaling_cur_freq", i);
 		if (n < 0) {
 			perror(NULL);
 			return 3;
@@ -394,10 +443,27 @@ int main(int argc, char *argv[]) {
 			perror("NULL");
 			return 4;
 		}
+
+		// Get limits
+		// min
+		int limit = readCPUFrequencyFile(i, "min");
+		if (limit == INT_MAX) {
+			perror(NULL);
+			return 11;
+		}
+		freqMins[i] = limit;
+
+		// max
+		limit = readCPUFrequencyFile(i, "max");
+		if (limit == INT_MAX) {
+			perror(NULL);
+			return 11;
+		}
+		freqMaxs[i] = limit;
 	}
 
 	if (refreshRate == 0) {
-		int e = printAll(uptimeFD, PSDir, freqFDs, nprocs);
+		int e = printAll(uptimeFD, PSDir, nprocs, freqFDs, freqMins, freqMaxs);
 		if (e != 0) {
 			perror(NULL);
 			return e;
@@ -407,21 +473,21 @@ int main(int argc, char *argv[]) {
 		// Clear terminal.
 		for (int i = refreshRate;; i++) {
 			// Clear the terminal every second
-			if (i == refreshRate) {
+			if (i == refreshRate || refreshRate < 1) {
 				i = 0;
 				printf("\e[2J");
 			}
 			// go to 0, 0
 			printf("\033[1;1H");
 
-			int e = printAll(uptimeFD, PSDir, freqFDs, nprocs);
+			int e = printAll(uptimeFD, PSDir, nprocs, freqFDs, freqMins, freqMaxs);
 			if (e != 0) {
 				perror(NULL);
 				return e;
 			}
 
 			// Very dumb sleep. Should really calc remaining interval time.
-			usleep(interval - 10); // -10 to account for approx running time.
+			usleep(interval); // -10 to account for approx running time.
 		}
 	}
 
