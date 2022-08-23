@@ -10,74 +10,80 @@
 #include <float.h>
 #include <limits.h>
 #include <stdarg.h>
+#include <errno.h>
 
-// Prints time section
-void printTime() {
-	const int maxLength = 40;
+/*
+Success: Returns a long int that is read from start of file at `path`.
+Error: Sets `err` to 1 and errno appropriately.
+*/
+long readLongFD(int fd, int *err) {
+	// Seek to start of file
+	lseek(fd, 0, SEEK_SET);
 
-	struct timeval tv;
-	gettimeofday(&tv, NULL);
-
-	struct tm *lt = localtime(&tv.tv_sec);
-	char format[maxLength];
-	strftime(format, maxLength, "%F %b %a %T.%%03d\n", lt);
-
-	printf(format, tv.tv_usec/1000);
-}
-
-int printUptime(int uptimeFD) {
-	// Seek to start of file.
-	lseek(uptimeFD, 0, SEEK_SET);
-
-	// Read entire file.
-	unsigned char l = 255;
+	// Read file
+	int l = 256;
 	char buf[l];
-	int n = read(uptimeFD, buf, l);
+	int n = read(fd, buf, l);
 	if (n == -1) {
-		return 1;
+		*err = 1;
+		return 0;
 	}
 
-	// Parse first number
-	double uptime = atof(buf); // s
-
-	printf("Up: %.1es (%.1fd)\n\n", uptime, uptime/60/60/24);
-
-	return 0;
-}
-
-int readIntFile(char *path) {
-	// Open file
-	FILE *file = fopen(path, "r");
-	if (file == NULL) {
-		return INT_MIN;
-	}
-
-	// Fead file
-	int value;
-	int n = fscanf(file, "%d", &value);
-	if (n == EOF) {
-		return INT_MIN;
-	}
-
-	n = fclose(file);
-	if (n == EOF) {
-		return INT_MIN;
+	errno = 0;
+	long value = strtol(buf, NULL, 10);
+	if (errno != 0) {
+		*err = 1;
+		return 0;
 	}
 
 	return value;
 }
 
-float readBatteryFile(int batIndex, char *fileName) {
+/*
+Success: Returns a long int that is read from start of file at `path`.
+Error: Sets `err` to 1 and errno appropriately.
+*/
+long readLongFile(char *path, int *err) {
+	// Open file
+	FILE *file = fopen(path, "r");
+	if (file == NULL) {
+		*err = 1;
+		return 0;
+	}
+
+	// Read file
+	long value;
+	fscanf(file, "%ld", &value);
+	if (errno != 0) {
+		*err = 1;
+		return 0;
+	}
+
+	int n = fclose(file);
+	if (errno != 0) {
+		*err = 1;
+		return 0;
+	}
+
+	return value;
+}
+
+/*
+Success: Returns float value read from file at "/sys/class/power_supply/BAT<batIndex>/<fileName>".
+Error: Sets `err` to 1 and errno appropriately.
+*/
+float readBatteryFile(int batIndex, char *fileName, int *err) {
 	// Format path
 	char path[256];
 	int n = sprintf(path, "/sys/class/power_supply/BAT%d/%s", batIndex, fileName);
 	if (n < 0) {
-		return FLT_MAX;
+		*err = 1;
+		return 0;
 	}
 
-	int value = readIntFile(path);
-	if (value == INT_MIN) {
-		return FLT_MAX;
+	long value = readLongFile(path, err);
+	if (err) {
+		return 0;
 	}
 	
 	// Convert to base unit.
@@ -86,14 +92,101 @@ float readBatteryFile(int batIndex, char *fileName) {
 	return SIBaseValue;
 }
 
-float readEnergyFile(int batIndex, char *fileName) {
-	float energy = readBatteryFile(batIndex, fileName);
+/*
+Similar to: `readBatteryFile`
+Difference: Converts return value from Wh to j.
+Note: `fileName` should typically be "energy_now", "energy_full" or "energy_full_design".
+*/
+float readEnergyFile(int batIndex, char *fileName, int *err) {
+	float energy = readBatteryFile(batIndex, fileName, err);
+	if (err) {
+		return 0; // use same error value as `readBatteryFile`
+	}
 	// convert Wh to j.
 	return energy*3600;
 }
 
-// Prints battery section
-int printBattery(DIR *PSDir) {
+/*
+Success: Prints the time section.
+Error: Sets `err` to 1 and errno appropriately.
+*/
+void printTime(int *err) {
+	const int maxLength = 256;
+
+	// Get high resolution time.
+	struct timeval tv;
+	int s = gettimeofday(&tv, NULL);
+	if (s == -1) {
+		*err = 1;
+		return;
+	}
+
+	// Get low resolution time
+	struct tm *lt = localtime(&tv.tv_sec);
+	if (lt == NULL) {
+		*err = 1;
+		return;
+	}
+
+	// Format low resolution time with format chars for high resolution time (note the %% near the end).
+	char format[maxLength];
+	int n = strftime(format, maxLength, "%F %b %a %T.%%03d\n", lt);
+	if (n == 0) {
+		*err = 1;
+		return;
+	}
+
+	// Print formatted low res time with high res time on end.
+	n = printf(format, tv.tv_usec/1000);
+	if (n == 0) {
+		*err = 1;
+		return;
+	}
+}
+
+/*
+Success: Prints the uptime section.
+Error: Sets `err` to 1 and errno appropriately.
+*/
+void printUptime(int uptimeFD, int *err) {
+	// Seek to start of file.
+	int n = lseek(uptimeFD, 0, SEEK_SET);
+	if (n == -1) {
+		*err = 1;
+		return;
+	}
+
+	// Read file.
+	unsigned char l = 255;
+	char buf[l];
+	n = read(uptimeFD, buf, l);
+	if (n == -1) {
+		*err = 1;
+		return;
+	}
+
+	// Parse first number
+	errno = 0;
+	double uptime = strtof(buf, NULL); // s
+	if (errno != 0) {
+		*err = 1;
+		return;
+	}
+
+	n = printf("Up: %.1es (%.1fd)\n\n", uptime, uptime/60/60/24);
+	if (n == 0) {
+		*err = 1;
+		return;
+	}
+}
+
+/*
+Success: Prints the battery section.
+Error: Sets `err` to 1 and errno appropriately.
+*/
+void printBattery(DIR *PSDir, int *err) {
+	int n;
+
 	/*
 		bats array
 		- Indicates whether a battery with each index was found.
@@ -111,18 +204,15 @@ int printBattery(DIR *PSDir) {
 	rewinddir(PSDir);
 
 	// Find entries in "/sys/class/power_supply" directory.
-	for (
-		struct dirent *entry = readdir(PSDir);
-		entry != NULL;
-		entry = readdir(PSDir)
-	) {
+	struct dirent *entry;
+	while ((entry = readdir(PSDir)) != NULL) {
 		char *name = entry->d_name;
 
 		// Check if AC is connected.
 		if (strcmp(name, "AC") == 0) {
-			int online = readIntFile("/sys/class/power_supply/AC/online");
-			if (online == INT_MAX) {
-				return 1;
+			long online = readLongFile("/sys/class/power_supply/AC/online", err);
+			if (err) {
+				return;
 			}
 			ACConnected = online;
 			continue;
@@ -136,7 +226,12 @@ int printBattery(DIR *PSDir) {
 		// Record that a battery was found.
 		batFound = 1;
 		// Parse battery index from name e.g. "BAT1" -> 1.
-		int batIndex = atoi(name + 3);
+		errno = 0;
+		long batIndex = strtol(name + 3, NULL, 10);
+		if (err != 0) {
+			*err = 1;
+			return;
+		}
 		// Mark index as present.
 		bats[batIndex] = 1;
 		// Record highest battery index for iteration.
@@ -147,7 +242,11 @@ int printBattery(DIR *PSDir) {
 
 	// Print heading.
 	if (batFound) {
-		printf("Battery:\n", ACConnected);
+		n = printf("Battery:\n");
+		if (n == 0) {
+			*err = 1;
+			return;
+		}
 	}
 
 	// Print stats for each battery.
@@ -159,23 +258,23 @@ int printBattery(DIR *PSDir) {
 
 		// Read files
 		// Energy
-		float energyNow = readEnergyFile(batIndex, "energy_now");
-		if (energyNow == FLT_MAX) {
-			return 1;
+		float energyNow = readEnergyFile(batIndex, "energy_now", err);
+		if (err) {
+			return;
 		}
-		float energyFull = readEnergyFile(batIndex, "energy_full");
-		if (energyFull == FLT_MAX) {
-			return 1;
+		float energyFull = readEnergyFile(batIndex, "energy_full", err);
+		if (err) {
+			return;
 		}
 		// Power
-		float power = readBatteryFile(batIndex, "power_now");
-		if (power == FLT_MAX) {
-			return 1;
+		float power = readBatteryFile(batIndex, "power_now", err);
+		if (err) {
+			return;
 		}
 		// Voltage
-		float voltage = readBatteryFile(batIndex, "voltage_now");
-		if (voltage == FLT_MAX) {
-			return 1;
+		float voltage = readBatteryFile(batIndex, "voltage_now", err);
+		if (err) {
+			return;
 		}
 
 		char format[100] = "%d: %.2fV %.2fA %05.2fW %05.1f/%03.fkj %03.f%%";
@@ -185,7 +284,7 @@ int printBattery(DIR *PSDir) {
 		strcat(format, "\n");
 		
 		// Print battery line.
-		printf(
+		n = printf(
 			format,
 			batIndex,
 			voltage,
@@ -196,28 +295,20 @@ int printBattery(DIR *PSDir) {
 			100/energyFull*energyNow,
 			energyNow/power/1000
 		);
+		if (n == 0) {
+			*err = 1;
+			return;
+		}
 	}
 
 	// Padding
 	if (batFound) {
-		printf("\n");
-	}
-
-	return 0;
-}
-
-int readIntFD(int fd) {
-		// Seek to begining of file from previos reads.
-		lseek(fd, 0, SEEK_SET);
-
-		// Read file
-		int l = 256;
-		char buf[l];
-		int n = read(fd, buf, l);
-		if (n == -1) {
-			return 1;
+		n = printf("\n");
+		if (n == 0) {
+			*err = 1;
+			return;
 		}
-		return atoi(buf);
+	}
 }
 
 // enum EntryType {
@@ -226,9 +317,16 @@ int readIntFD(int fd) {
 // 	EntryTypeOther,
 // };
 
-int printCPU(int nprocs, int *freqFDs, int *freqMins, int *freqMaxs) {
-	printf("CPU:\n");
-	int highestCur = 0;
+/*
+Success: Prints the CPU section.
+Error: Sets `err` to 1 and errno appropriately.
+*/
+void printCPU(int nprocs, int *freqFDs, int *freqMins, int *freqMaxs, int *err) {
+	int n = printf("CPU:\n");
+	if (n == 0) {
+		*err = 1;
+		return;
+	}
 
 	char *levels[] = {
 		// Shading
@@ -249,18 +347,18 @@ int printCPU(int nprocs, int *freqFDs, int *freqMins, int *freqMaxs) {
 		"\u2589",
 		"\u2588"
 	};
+	int maxLevel = sizeof(levels) / sizeof(levels[0]) - 1;
 
-	int maxLevel = sizeof(levels) / sizeof(levels[0]);
-
+	int highestFreq = 0;
 	for (int i = 0; i < nprocs; i++) {
-		int cur = readIntFD(freqFDs[i]);
+		int cur = readLongFD(freqFDs[i], err);
 		int min = freqMins[i];
 		int max = freqMaxs[i];
 		float range = max - min;
 		
 		// Update maxFreq
-		if (cur > highestCur) {
-			highestCur = cur;
+		if (cur > highestFreq) {
+			highestFreq = cur;
 		}
 
 		int level = maxLevel/range*(cur-min);
@@ -268,10 +366,19 @@ int printCPU(int nprocs, int *freqFDs, int *freqMins, int *freqMaxs) {
 			level = 0;
 		}
 
-		printf("%3d %.1fGhz %s\n", i, cur/1e6, levels[level]);
+		n = printf("%3d %.1fGhz %s\n", i, cur/1e6, levels[level]);
+		if (n == 0) {
+			*err = 1;
+			return;
+		}
 	}
 
-	printf("max %.1fGHz\n", highestCur/1e6);
+	// Print highest CPU frequency.
+	n = printf("max %.1fGHz\n", highestFreq/1e6);
+	if (n == 0) {
+		*err = 1;
+		return;
+	}
 
 	// /proc/stat stuff. Commenting out for now. Focusing on instantationus info.
 	// int uh = sysconf(_SC_CLK_TCK);
@@ -341,49 +448,84 @@ int printCPU(int nprocs, int *freqFDs, int *freqMins, int *freqMaxs) {
 	// for (int i = 0; i < CPUCount; i++) {
 	// 	printf("%d: %d\n", i, individualIdle[i]);
 	// }
+}
+
+/*
+Success: Prints the memory section.
+Error: Sets `err` to 1 and errno appropriately.
+*/
+int printMemory(int memFD, int *err) {
+	// long readLongFD();
+
 	return 0;
 }
 
-int printAll(int uptimeFD, DIR *PSDir, int nprocs, int *freqFDs, int *freqMins, int *freqMaxs) {
-	printTime();
-
-	int e = printUptime(uptimeFD);
-	if (e == 1) {
-		perror(NULL);
-		return 5;
+/*
+Success: Prints all sections.
+Error: Sets `err` to 1 and errno appropriately.
+*/
+void printAll(
+	int uptimeFD,
+	DIR *PSDir,
+	int nprocs,
+	int *freqFDs,
+	int *freqMins,
+	int *freqMaxs,
+	int memFD,
+	int *err
+) {
+	printTime(err);
+	if (err) {
+		return;
 	}
 
-	e = printBattery(PSDir);
-	if (e == 1) {
-		perror(NULL);
-		return 5;
+	printUptime(uptimeFD, err);
+	if (err) {
+		return;
 	}
 
-	e = printCPU(nprocs, freqFDs, freqMins, freqMaxs);
-	if (e == 1) {
-		perror(NULL);
-		return 6;
+	printBattery(PSDir, err);
+	if (err) {
+		return;
+	}
+
+	printCPU(nprocs, freqFDs, freqMins, freqMaxs, err);
+	if (err) {
+		return;
+	}
+
+	printMemory(memFD, err);
+	if (err) {
+		return;
 	}
 }
 
-int readCPUFrequencyFile(int cpu, char *limitName) {
+/*
+Success: Returns frequency.
+Error: Sets `err` to 1 and errno appropriately.
+*/
+long readCPUFrequencyFile(int cpu, char *limitName, int *err) {
 	// Format path
 	char path[256];
 	int n = sprintf(path, "/sys/devices/system/cpu/cpufreq/policy%d/scaling_%s_freq", cpu, limitName);
 	if (n < 0) {
-		return INT_MAX;
+		*err = 1;
+		return 0;
 	}
 
-	// Read file.
-	int freq = readIntFile(path);
-	if (freq == INT_MAX) {
-		return INT_MAX;
+	// Read file
+	long freq = readLongFile(path, err);
+	if (err) {
+		return 0;
 	}
 
 	return freq;
 }
 
 int main(int argc, char *argv[]) {
+	int *err = 0;
+	int n = 0;
+
 	// Parse arguments.
 	float refreshRate = 0;
 	char opt;
@@ -393,18 +535,26 @@ int main(int argc, char *argv[]) {
 		}
 		switch (opt) {
 			case 'h':
-				printf("Usage: syspector [-r <refresh-rate (Hz)>]\n");
-				return 9;
+				n = printf("Usage: syspector [-r <refresh-rate (Hz)>]\n");
+				if (n == 0) {
+					perror(NULL);
+					return 1;
+				}
+				return 1;
 				break;
 			case 'r':
 				char *endP;
 				refreshRate = strtof(optarg, &endP);
 				if (refreshRate == LONG_MIN || refreshRate == LONG_MAX) {
 					perror(NULL);
-					return 8;
+					return 1;
 				} else if (endP == optarg) {
-					fprintf(stderr, "Refresh rate requires a number but got \"%s\".\n", optarg);
-					return 9;
+					n = fprintf(stderr, "Refresh rate requires a number but got \"%s\".\n", optarg);
+					if (n == 0) {
+						perror(NULL);
+						return 1;
+					}
+					return 1;
 				}
 				break;
 		}
@@ -413,7 +563,7 @@ int main(int argc, char *argv[]) {
 	// Open uptime file.
 	int uptimeFD = open("/proc/uptime", O_RDONLY);
 	if (uptimeFD == -1) {
-		perror("NULL");
+		perror(NULL);
 		return 1;
 	}
 
@@ -421,7 +571,7 @@ int main(int argc, char *argv[]) {
 	DIR *PSDir = opendir("/sys/class/power_supply");
 	if (PSDir == NULL) {
 		perror(NULL);
-		return 2;
+		return 1;
 	}
 
 	// Get processor frequency FDs and min/max.
@@ -436,37 +586,44 @@ int main(int argc, char *argv[]) {
 		int n = sprintf(path, "/sys/devices/system/cpu/cpufreq/policy%d/scaling_cur_freq", i);
 		if (n < 0) {
 			perror(NULL);
-			return 3;
+			return 1;
 		}
 		freqFDs[i] = open(path, O_RDONLY);
 		if (freqFDs[i] == -1) {
 			perror("NULL");
-			return 4;
+			return 1;
 		}
 
 		// Get limits
 		// min
-		int limit = readCPUFrequencyFile(i, "min");
-		if (limit == INT_MAX) {
+		int limit = readCPUFrequencyFile(i, "min", err);
+		if (err) {
 			perror(NULL);
-			return 11;
+			return 1;
 		}
 		freqMins[i] = limit;
 
 		// max
-		limit = readCPUFrequencyFile(i, "max");
-		if (limit == INT_MAX) {
+		limit = readCPUFrequencyFile(i, "max", err);
+		if (err) {
 			perror(NULL);
-			return 11;
+			return 1;
 		}
 		freqMaxs[i] = limit;
 	}
 
+	// Open memory file.
+	int memFD = open("/proc/meminfo", O_RDONLY);
+	if (memFD == -1) {
+		perror(NULL);
+		return 12;
+	}
+
 	if (refreshRate == 0) {
-		int e = printAll(uptimeFD, PSDir, nprocs, freqFDs, freqMins, freqMaxs);
-		if (e != 0) {
+		printAll(uptimeFD, PSDir, nprocs, freqFDs, freqMins, freqMaxs, memFD, err);
+		if (err) {
 			perror(NULL);
-			return e;
+			return 1;
 		}
 	} else {
 		const int interval = 1e6 / refreshRate; // us
@@ -480,14 +637,14 @@ int main(int argc, char *argv[]) {
 			// go to 0, 0
 			printf("\033[1;1H");
 
-			int e = printAll(uptimeFD, PSDir, nprocs, freqFDs, freqMins, freqMaxs);
-			if (e != 0) {
+			printAll(uptimeFD, PSDir, nprocs, freqFDs, freqMins, freqMaxs, memFD, err);
+			if (err) {
 				perror(NULL);
-				return e;
+				return 1;
 			}
 
 			// Very dumb sleep. Should really calc remaining interval time.
-			usleep(interval); // -10 to account for approx running time.
+			usleep(interval);
 		}
 	}
 

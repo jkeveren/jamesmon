@@ -1,2 +1,2 @@
 syspector: main.c
-	gcc main.c -o syspector
+	gcc -g main.c -o syspector
