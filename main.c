@@ -290,7 +290,6 @@ void printBattery(DIR *PSDir, int *err) {
 		}
 		// Power
 		float power = readBatteryFile(batIndex, "power_now", err);
-		printf("Error: %d\n", *err);
 		if (*err) {
 			return;
 		}
