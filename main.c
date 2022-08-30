@@ -480,28 +480,68 @@ void printCPU(int nprocs, int *freqFDs, int *freqMins, int *freqMaxs, int *err) 
 }
 
 /*
+Success: Returns kiB as SI GB float.
+Error: Impossible.
+*/
+float kiBToSIGB(float kiB) {
+	return (kiB*1024)/1e9;
+}
+
+/*
 Success: Prints the memory section.
 Error: Sets `err` to 1 and errno appropriately.
 */
-int printMemory(int memFD, int *err) {
-	int n = lseek(memFD, 0, SEEK_SET);
-	if (n == -1) {
+void printMemory(FILE *memFile, int *err) {
+	int n = printf("\nMemory:\n");
+	if (n < 0) {
 		*err = 1;
-		return 0;
+		return;
+	}
+	// Go to start of meminfo file.
+	rewind(memFile);
+
+	// Memory properties
+	float total = 0;
+	float available = 0;
+
+	// Iterate key, value lines.
+	char key[256];
+	float value; // Typically kiB (written as kB in meminfo) but some are unitless.
+	while (1) {
+		errno = 0;
+		n = fscanf(memFile, "%s %f kB\n", &key, &value);
+		if (errno != 0) {
+			*err = 1;
+			return;
+		}
+		if (n == EOF) {
+			break;
+		}
+
+		if (strcmp(key, "MemTotal:") == 0) {
+			total = kiBToSIGB(value);
+		} else if (strcmp(key, "MemAvailable:") == 0) {
+			available = kiBToSIGB(value);
+		}
 	}
 
-	int l = 5000;
-	char buf[l];
-	memset(buf, 0, l);
-	n = read(memFD, buf, l);
-	if (n == -1) {
-		*err = 1;
-		return 0;
-	}
+	float used = total - available;
 
-	// printf("%s\n", buf);
+	char *levels[] = {
+		"\u2581",
+		"\u2582",
+		"\u2583",
+		"\u2584",
+		"\u2585",
+		"\u2586",
+		"\u2587",
+		"\u2588"
+	};
+	int maxLevel = 7;
 
-	return 0;
+	int level = maxLevel/total*used;
+
+	printf("%.3f/%.1fGB (%.3f%%) %s\n", used, total, 100/total*(used), levels[level]);
 }
 
 /*
@@ -515,7 +555,7 @@ void printAll(
 	int *freqFDs,
 	int *freqMins,
 	int *freqMaxs,
-	int memFD,
+	FILE *memFile,
 	int *err
 ) {
 	printTime(err);
@@ -538,7 +578,7 @@ void printAll(
 		return;
 	}
 
-	printMemory(memFD, err);
+	printMemory(memFile, err);
 	if (*err) {
 		return;
 	}
@@ -634,14 +674,14 @@ int main(int argc, char *argv[]) {
 	}
 
 	// Open memory file.
-	int memFD = open("/proc/meminfo", O_RDONLY);
-	if (memFD == -1) {
+	FILE *memFile = fopen("/proc/meminfo", "r");
+	if (memFile == NULL) {
 		perror("Error opening meminfo file.");
 		return 1;
 	}
 
 	if (refreshRate == 0) {
-		printAll(uptimeFD, PSDir, nprocs, freqFDs, freqMins, freqMaxs, memFD, err);
+		printAll(uptimeFD, PSDir, nprocs, freqFDs, freqMins, freqMaxs, memFile, err);
 		if (*err) {
 			perror("Error printing all sections.");
 			return 1;
@@ -651,16 +691,14 @@ int main(int argc, char *argv[]) {
 		// Clear terminal.
 		for (int i = refreshRate;; i++) {
 			// Clear the terminal every second
-			if (i == refreshRate || refreshRate < 1) {
+			if (i == refreshRate || refreshRate < 1 || 1) {
 				i = 0;
 				printf("\e[2J");
 			}
 			// go to 0, 0
 			printf("\033[1;1H");
 
-			printf("%2d\n", i);
-
-			printAll(uptimeFD, PSDir, nprocs, freqFDs, freqMins, freqMaxs, memFD, err);
+			printAll(uptimeFD, PSDir, nprocs, freqFDs, freqMins, freqMaxs, memFile, err);
 			if (*err) {
 				perror("Error printing all sections.");
 				return 1;
