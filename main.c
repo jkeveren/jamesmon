@@ -11,8 +11,9 @@
 #include <limits.h>
 #include <stdarg.h>
 #include <errno.h>
+#include <math.h>
 
-char *hLevels[] = {
+char *fineChars[] = {
 	" ",
 	"\u258F",
 	"\u258E",
@@ -24,31 +25,86 @@ char *hLevels[] = {
 	"\u2588"
 };
 
-char *vLevels[] = {
-	" ",
-	"\u2581",
-	"\u2582",
-	"\u2583",
-	"\u2584",
-	"\u2585",
-	"\u2586",
-	"\u2587",
-	"\u2588"
-};
+// char *fineChars[] = {
+// 	"0",
+// 	"1",
+// 	"2",
+// 	"3",
+// 	"4",
+// 	"5",
+// 	"6"
+// };
 
-// Highest index in levels arrays
-int maxLevel = sizeof(hLevels) / sizeof(hLevels[0]) - 1;
+#define fineCharCount (sizeof fineChars / sizeof fineChars[0])
+#define maxFineChar (fineCharCount - 1)
 
-int calcLevel(float minValue, float maxValue, float value) {
-	float range = maxValue - minValue;
-	int level = maxLevel / range * (value - minValue);
+/*
+Success: Prints a bar that represents a value as a portion of another value.
+Error: Sets `err` to 1 and errno appropriately.
+Arguments:
+	s: String to write bar in.
+		- Must have a size of at least (`maxChars` + 1) * 4 + 1 to allow for 4 byte unicode characters, max value line and null termination.
+	length: Visual length of the bar.
+		- Does not include the max value character on end of bar.
+	minValue: Value representing 0 on the bar.
+	maxValue: Value that fills the bar.
+	value: Value to display with the bar.
+	err: Should be 0 before calling. Get's seto to 1 on error.
+*/
+char makeBar(char *s, int length, float minValue, float maxValue, float value, int *err) {
+	/*
+	A bar is made of three sections:
+		| 1 |2| 3 |4|
+		█████▌     |
 
-	// Limit in case value is not between min and max.
-	if (level > 0) {
-		level == 0;
-	} else if (level > maxLevel) {
-		level = maxLevel;
+		1. Course: Full characters that display most of the value.
+		2. Fine: A non-full width character that provides high resolution at the "tip" of the bar.
+		3. Spaces: Literal space chars that overwrite the previous frame.
+		4. Max: Character representing the maximum possible value.
+	*/
+
+	// Clear buffer.
+	s[0] = 0;
+
+	// Limit value to between min and max.
+	if (value < minValue) {
+		value = minValue;
+	} else if (value > maxValue) {
+		value = maxValue;
 	}
+
+	float range = maxValue - minValue;
+
+	// Convert `value` to fine units.
+	// This also makes the minimum `fineValue` 1 so a `value` of 0 is still visible
+	int fineValue = ((length * fineCharCount) - 1) / range * (value - minValue);
+	fineValue++;
+
+	// Convert `value` to coarse units (characters).
+	float coarseValue = fineValue / fineCharCount;
+
+	// Get index for fine character to print.
+	int fineCharIndex = fineValue % fineCharCount;
+
+	int i = 0;
+	// Print coarse chars.
+	for (;i < coarseValue; i++) {
+		strcat(s, fineChars[maxFineChar]);
+	}
+
+	// Print fine char if index is more than 0.
+	// Don't print blank space (This fixes a bug where the limit line is pushed out one extra space when bar is full).
+	if (fineCharIndex) {
+		strcat(s, fineChars[fineCharIndex]);
+		i++;
+	}
+
+	for (;i < length; i++) {
+		strcat(s, " ");
+	}
+
+	// Print max value line
+	strcat(s, "\u258F");
 }
 
 /*
@@ -203,6 +259,23 @@ void printTime(int *err) {
 		*err = 1;
 		return;
 	}
+
+	// n = 8*2-1;
+	// int barLength = 2;
+	// char bar[(barLength+1) * 4 + 1];
+	// for (int i = 0; i <= n; i++) {
+	// 	makeBar(bar, barLength, 0, n, i, err);
+	// 	printf("%s\n", bar);
+	// }
+
+	// makeBar(bar, 1, 0, 1, sin(tv.tv_usec / 1e6 * 2 * M_PI) / 2 + 0.5, err);
+	// printf("%s\n", bar);
+
+	// makeBar(bar, 2, 0, 1, sin(tv.tv_usec / 1e6 * 2 * M_PI) / 2 + 0.5, err);
+	// printf("%s\n", bar);
+
+	// makeBar(bar, 3, 0, 1, sin(tv.tv_usec / 1e6 * 2 * M_PI) / 2 + 0.5, err);
+	// printf("%s\n", bar);
 }
 
 /*
@@ -234,7 +307,7 @@ void printUptime(int uptimeFD, int *err) {
 		return;
 	}
 
-	n = printf("Up: %.1es (%.1fd)\n\n", uptime, uptime/60/60/24);
+	n = printf("Up: %.1es (%.1fd)\n", uptime, uptime/60/60/24);
 	if (n == 0) {
 		*err = 1;
 		return;
@@ -303,7 +376,7 @@ void printBattery(DIR *PSDir, int *err) {
 
 	// Print heading.
 	if (batFound) {
-		n = printf("Battery:\n");
+		n = printf("\nBattery:\n");
 		if (n == 0) {
 			*err = 1;
 			return;
@@ -345,7 +418,10 @@ void printBattery(DIR *PSDir, int *err) {
 		float secondsRemaining;
 		float hoursRemaining;
 
-		char format[100] = "%d: %.2fV %.2fA %05.2fW %05.1f/%03.f/%03.fkj %03.f%%";
+		char bar[50];
+		makeBar(bar, 3, 0, energyFull, energyNow, err);
+
+		char format[100] = "\033[2K%d: %.2fV %.2fA %05.2fW %05.1f/%03.f/%03.fkj %03.f%% %s";
 		if (!ACConnected && power > 0) {
 			strcat(format, " %.1fks (%.1fh)");
 
@@ -359,12 +435,13 @@ void printBattery(DIR *PSDir, int *err) {
 			format,
 			batIndex,
 			voltage,
-			power/voltage, // Current
+			power/voltage, // current
 			power,
 			energyNow/1000,
 			energyFull/1000,
 			energyFullDesign/1000,
-			100/energyFull*energyNow,
+			100/energyFull*energyNow, // percentage
+			bar,
 			secondsRemaining/1000,
 			hoursRemaining
 		);
@@ -372,49 +449,48 @@ void printBattery(DIR *PSDir, int *err) {
 			*err = 1;
 			return;
 		}
-	}
-
-	// Padding
-	if (batFound) {
-		n = printf("\n");
-		if (n == 0) {
-			*err = 1;
-			return;
-		}
+		// printBar(5, 0, energyFull, energyNow, err);
+		// printf("\n");
 	}
 }
-
-// enum EntryType {
-// 	EntryTypeCPU,
-// 	EntryTypeCPUN,
-// 	EntryTypeOther,
-// };
 
 /*
 Success: Prints the CPU section.
 Error: Sets `err` to 1 and errno appropriately.
 */
 void printCPU(int nprocs, int *freqFDs, int *freqMins, int *freqMaxs, int *err) {
-	int n = printf("CPU:\n");
+	int n = printf("\nCPU:\n");
 	if (n == 0) {
 		*err = 1;
 		return;
 	}
 
-	int highestFreq = 0;
+	// Values for CPU with highest current freq.
+	int highestMin = 0;
+	int highestMax = 0;
+	int highestCur = 0;
+
+	char bar[50];
+
+	// Print info for each processor.
 	for (int i = 0; i < nprocs; i++) {
 		int cur = readLongFD(freqFDs[i], err);
 		int min = freqMins[i];
 		int max = freqMaxs[i];
 		
 		// Update maxFreq
-		if (cur > highestFreq) {
-			highestFreq = cur;
+		if (cur > highestCur) {
+			highestMin = min;
+			highestMax = max;
+			highestCur = cur;
 		}
 
-		int level = calcLevel((float)min, (float)max, (float)cur);
+		makeBar(bar, 5, min, max, cur, err);
+		if (*err) {
+			return;
+		}
 
-		n = printf("%3d %.1fGHz \u2595%s\u258F\n", i, cur/1e6, hLevels[level]);
+		n = printf("\033[2K%3d %.1fGHz %s\n", i, cur/1e6, bar);
 		if (n == 0) {
 			*err = 1;
 			return;
@@ -422,80 +498,15 @@ void printCPU(int nprocs, int *freqFDs, int *freqMins, int *freqMaxs, int *err) 
 	}
 
 	// Print highest CPU frequency.
-	n = printf("max %.1fGHz\n", highestFreq/1e6);
+	makeBar(bar, 5, highestMin, highestMax, highestCur, err);
+	if (*err) {
+		return;
+	}
+	n = printf("\033[2Kmax %.1fGHz %s\n", highestCur/1e6, bar);
 	if (n == 0) {
 		*err = 1;
 		return;
 	}
-
-	// /proc/stat stuff. Commenting out for now. Focusing on instantationus info.
-	// int uh = sysconf(_SC_CLK_TCK);
-	// printf("%d\n", uh);
-
-	// // Read entire file
-	// int maxLength = 20000;
-	// char buf[maxLength];
-	// read(procStatFD, (void *) buf, maxLength);
-
-	// unsigned long long systemIdle;
-	// unsigned long long individualIdle[1000];
-	// int CPUCount = 0;
-
-	// // Tokenise into entries
-	// char *entryDelim = "\n";
-	// char *entrySavePtr;
-	// char *entry = strtok_r(buf, entryDelim, &entrySavePtr);
-	// while (1) {
-	// 	// Tokenise into columns
-	// 	char *colDelim = " ";
-	// 	char *colSavePtr;
-	// 	char *col = strtok_r(entry, colDelim, &colSavePtr);
-	// 	enum EntryType entryType;
-	// 	int CPUN;
-	// 	for (int i = 0; 1; i++) {
-	// 		if (i == 0) {
-	// 			// Handle type/name column
-	// 			if (strncmp(col, "cpu", 3) == 0) {
-	// 				if (strlen(col) == 3) {
-	// 					// System CPU
-	// 					entryType = EntryTypeCPU;
-	// 				} else {
-	// 					// Individual CPU
-	// 					entryType = EntryTypeCPUN;
-	// 					// Read CPU number from column
-	// 					CPUN = strtol(col + 3, NULL, 10); // 3 is the length of "cpu"
-	// 					CPUCount++;
-	// 				}
-	// 			} else {
-	// 				break;
-	// 			}
-	// 		} else if (i == 4) {
-	// 			// Handle data column
-	// 			if (entryType == EntryTypeCPU) {
-	// 				systemIdle = strtol(col, NULL, 10);
-	// 				break;
-	// 			} else if (entryType == EntryTypeCPUN) {
-	// 				individualIdle[CPUN] = strtol(col, NULL, 10);
-	// 				break;
-	// 			}
-	// 		}
-
-	// 		col = strtok_r(NULL, colDelim, &colSavePtr);
-	// 		if (col == NULL) {
-	// 			break;
-	// 		}
-	// 	}
-
-	// 	entry = strtok_r(NULL, entryDelim, &entrySavePtr);
-	// 	if (entry == NULL) {
-	// 		break;
-	// 	}
-	// }
-
-	// printf("System: %d\n", systemIdle);
-	// for (int i = 0; i < CPUCount; i++) {
-	// 	printf("%d: %d\n", i, individualIdle[i]);
-	// }
 }
 
 /*
@@ -546,7 +557,9 @@ void printMemory(FILE *memFile, int *err) {
 
 	float used = total - available;
 
-	printf("%.3f/%.1fGB (%.3f%%) \u2595%s\u258F\n", used, total, 100/total*(used), vLevels[calcLevel(0, total, used)]);
+	char bar[20];
+	makeBar(bar, 5, 0, total, used, err);
+	printf("\033[2K%.3f/%.1fGB %.f%% %s\n", used, total, 100/total*(used), bar);
 }
 
 /*
