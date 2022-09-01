@@ -12,6 +12,45 @@
 #include <stdarg.h>
 #include <errno.h>
 
+char *hLevels[] = {
+	" ",
+	"\u258F",
+	"\u258E",
+	"\u258D",
+	"\u258C",
+	"\u258B",
+	"\u258A",
+	"\u2589",
+	"\u2588"
+};
+
+char *vLevels[] = {
+	" ",
+	"\u2581",
+	"\u2582",
+	"\u2583",
+	"\u2584",
+	"\u2585",
+	"\u2586",
+	"\u2587",
+	"\u2588"
+};
+
+// Highest index in levels arrays
+int maxLevel = sizeof(hLevels) / sizeof(hLevels[0]) - 1;
+
+int calcLevel(float minValue, float maxValue, float value) {
+	float range = maxValue - minValue;
+	int level = maxLevel / range * (value - minValue);
+
+	// Limit in case value is not between min and max.
+	if (level > 0) {
+		level == 0;
+	} else if (level > maxLevel) {
+		level = maxLevel;
+	}
+}
+
 /*
 Success: Returns a long int that is read from start of file at `path`.
 Error: Sets `err` to 1 and errno appropriately.
@@ -288,6 +327,10 @@ void printBattery(DIR *PSDir, int *err) {
 		if (*err) {
 			return;
 		}
+		float energyFullDesign = readEnergyFile(batIndex, "energy_full_design", err);
+		if (*err) {
+			return;
+		}
 		// Power
 		float power = readBatteryFile(batIndex, "power_now", err);
 		if (*err) {
@@ -302,7 +345,7 @@ void printBattery(DIR *PSDir, int *err) {
 		float secondsRemaining;
 		float hoursRemaining;
 
-		char format[100] = "%d: %.2fV %.2fA %05.2fW %05.1f/%03.fkj %03.f%%";
+		char format[100] = "%d: %.2fV %.2fA %05.2fW %05.1f/%03.f/%03.fkj %03.f%%";
 		if (!ACConnected && power > 0) {
 			strcat(format, " %.1fks (%.1fh)");
 
@@ -320,6 +363,7 @@ void printBattery(DIR *PSDir, int *err) {
 			power,
 			energyNow/1000,
 			energyFull/1000,
+			energyFullDesign/1000,
 			100/energyFull*energyNow,
 			secondsRemaining/1000,
 			hoursRemaining
@@ -357,45 +401,20 @@ void printCPU(int nprocs, int *freqFDs, int *freqMins, int *freqMaxs, int *err) 
 		return;
 	}
 
-	char *levels[] = {
-		// Shading
-		// " ",
-		// "\u2591",
-		// "\u2592",
-		// "\u2593",
-		// "\u2588"
-
-		// Left block
-		// " ",
-		"\u258F",
-		"\u258E",
-		"\u258D",
-		"\u258C",
-		"\u258B",
-		"\u258A",
-		"\u2589",
-		"\u2588"
-	};
-	int maxLevel = sizeof(levels) / sizeof(levels[0]) - 1;
-
 	int highestFreq = 0;
 	for (int i = 0; i < nprocs; i++) {
 		int cur = readLongFD(freqFDs[i], err);
 		int min = freqMins[i];
 		int max = freqMaxs[i];
-		float range = max - min;
 		
 		// Update maxFreq
 		if (cur > highestFreq) {
 			highestFreq = cur;
 		}
 
-		int level = maxLevel/range*(cur-min);
-		if (level < 0) {
-			level = 0;
-		}
+		int level = calcLevel((float)min, (float)max, (float)cur);
 
-		n = printf("%3d %.1fGhz %s\n", i, cur/1e6, levels[level]);
+		n = printf("%3d %.1fGHz \u2595%s\u258F\n", i, cur/1e6, hLevels[level]);
 		if (n == 0) {
 			*err = 1;
 			return;
@@ -527,21 +546,7 @@ void printMemory(FILE *memFile, int *err) {
 
 	float used = total - available;
 
-	char *levels[] = {
-		"\u2581",
-		"\u2582",
-		"\u2583",
-		"\u2584",
-		"\u2585",
-		"\u2586",
-		"\u2587",
-		"\u2588"
-	};
-	int maxLevel = 7;
-
-	int level = maxLevel/total*used;
-
-	printf("%.3f/%.1fGB (%.3f%%) %s\n", used, total, 100/total*(used), levels[level]);
+	printf("%.3f/%.1fGB (%.3f%%) \u2595%s\u258F\n", used, total, 100/total*(used), vLevels[calcLevel(0, total, used)]);
 }
 
 /*
@@ -691,7 +696,7 @@ int main(int argc, char *argv[]) {
 		// Clear terminal.
 		for (int i = refreshRate;; i++) {
 			// Clear the terminal every second
-			if (i == refreshRate || refreshRate < 1 || 1) {
+			if (i == refreshRate || refreshRate < 1) {
 				i = 0;
 				printf("\e[2J");
 			}
