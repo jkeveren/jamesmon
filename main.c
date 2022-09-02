@@ -88,19 +88,18 @@ char makeBar(char *s, int length, float minValue, float maxValue, float value, i
 
 	int i = 0;
 	// Print coarse chars.
-	for (;i < coarseValue; i++) {
-		strcat(s, fineChars[maxFineChar]);
+	while (i < coarseValue) {
+		strcat(s + i++, fineChars[maxFineChar]);
 	}
 
 	// Print fine char if index is more than 0.
 	// Don't print blank space (This fixes a bug where the limit line is pushed out one extra space when bar is full).
 	if (fineCharIndex) {
-		strcat(s, fineChars[fineCharIndex]);
-		i++;
+		strcat(s + i++, fineChars[fineCharIndex]);
 	}
 
-	for (;i < length; i++) {
-		strcat(s, " ");
+	while (i < length) {
+		strcat(s + i++, " ");
 	}
 
 	// Print max value line
@@ -423,7 +422,7 @@ void printBattery(DIR *PSDir, int *err) {
 
 		char format[100] = "\033[2K%d: %.2fV %.2fA %05.2fW %05.1f/%03.f/%03.fkj %03.f%% %s";
 		if (!ACConnected && power > 0) {
-			strcat(format, " %.1fks (%.1fh)");
+			strcat(format, "%.1fks (%.1fh)");
 
 			secondsRemaining = energyNow/power;
 			hoursRemaining = secondsRemaining/60/60;
@@ -471,6 +470,7 @@ void printCPU(int nprocs, int *freqFDs, int *freqMins, int *freqMaxs, int *err) 
 	int highestCur = 0;
 
 	char bar[50];
+	int barLength = 5;
 
 	// Print info for each processor.
 	for (int i = 0; i < nprocs; i++) {
@@ -485,7 +485,7 @@ void printCPU(int nprocs, int *freqFDs, int *freqMins, int *freqMaxs, int *err) 
 			highestCur = cur;
 		}
 
-		makeBar(bar, 5, min, max, cur, err);
+		makeBar(bar, barLength, min, max, cur, err);
 		if (*err) {
 			return;
 		}
@@ -498,7 +498,7 @@ void printCPU(int nprocs, int *freqFDs, int *freqMins, int *freqMaxs, int *err) 
 	}
 
 	// Print highest CPU frequency.
-	makeBar(bar, 5, highestMin, highestMax, highestCur, err);
+	makeBar(bar, barLength, highestMin, highestMax, highestCur, err);
 	if (*err) {
 		return;
 	}
