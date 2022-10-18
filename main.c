@@ -53,7 +53,7 @@ Arguments:
 */
 char makeBar(char *s, int length, float minValue, float maxValue, float value, int *err) {
 	/*
-	A bar is made of three sections:
+	A bar is made of four sections:
 		| 1 |2| 3 |4|
 		█████▌     |
 

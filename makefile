@@ -1,2 +1,4 @@
+CC ?= gcc
+
 syspect: main.c
-	gcc -Werror -lm -g main.c -o syspect
+	$(CC) -Werror -lm -g -O0 main.c -o syspect
