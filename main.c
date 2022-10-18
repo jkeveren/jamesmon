@@ -53,18 +53,18 @@ Arguments:
 */
 char makeBar(char *s, int length, float minValue, float maxValue, float value, int *err) {
 	/*
-	A bar is made of four sections:
-		| 1 |2| 3 |4|
-		█████▌     |
+	A bar has four sections:
+	| 1 |2| 3 |4|
+	█████▌     |
 
-		1. Course: Full characters that display most of the value.
-		2. Fine: A non-full width character that provides high resolution at the "tip" of the bar.
-		3. Spaces: Literal space chars that overwrite the previous frame.
-		4. Max: Character representing the maximum possible value.
+	1. Course: Full characters that display most of the value.
+	2. Fine: A non-full width character that provides high resolution at the "tip" of the bar.
+	3. Spaces: Literal space chars that overwrite the previous frame.
+	4. Max: Character representing the maximum possible value.
 	*/
 
 	// Clear buffer.
-	s[0] = 0;
+	s[0] = '\0';
 
 	// Limit value to between min and max.
 	if (value < minValue) {
@@ -609,7 +609,7 @@ int main(int argc, char *argv[]) {
 
 	// Parse arguments.
 	float refreshRate = 0;
-	char opt;
+	int opt;
 	while ((opt = getopt(argc, argv, "r:h")) != -1) {
 		if (opt == '?') {
 			return 7;
