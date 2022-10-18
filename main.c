@@ -207,7 +207,7 @@ Error: Sets `err` to 1 and errno appropriately.
 long readCPUFrequencyFile(int cpu, char *limitName, int *err) {
 	// Format path
 	char path[256];
-	int n = sprintf(path, "/sys/devices/system/cpu/cpufreq/policy%d/scaling_%s_freq", cpu, limitName);
+	int n = sprintf(path, "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_%s_freq", cpu, limitName);
 	if (n < 0) {
 		*err = 1;
 		return 0;
@@ -662,7 +662,7 @@ int main(int argc, char *argv[]) {
 	for (int i = 0; i < nprocs; i++) {
 		// Get "scaling_cur_freq" FD
 		char path[256];
-		int n = sprintf(path, "/sys/devices/system/cpu/cpufreq/policy%d/scaling_cur_freq", i);
+		int n = sprintf(path, "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_cur_freq", i);
 		if (n < 0) {
 			perror("Error formatting scaling_cur_freq path.");
 			return 1;
