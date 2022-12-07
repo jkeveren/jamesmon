@@ -420,7 +420,7 @@ void printBattery(DIR *PSDir, int *err) {
 		char bar[50];
 		makeBar(bar, 3, 0, energyFull, energyNow, err);
 
-		char format[100] = "\033[2K%d: %.2fV %.2fA %05.2fW %05.1f/%03.f/%03.fkj %03.f%% %s";
+		char format[100] = "\033[2K%d: %5.2fV %.2fA %5.2fW %5.1f/%3.f/%3.fkj %3.f%% %s";
 		if (!ACConnected && power > 0) {
 			strcat(format, "%.1fks (%.1fh)");
 
