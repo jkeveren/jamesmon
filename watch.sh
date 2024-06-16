@@ -1,0 +1,1 @@
+ls src/* | entr -crs "./build.sh && ./bin/syspect -i 16"
