@@ -4,7 +4,7 @@
 #include <iostream>
 #include <format>
 
-const std::string usage = "Usage: syspect [-i REFRESH_INTERVAL] [-f REFRESH_FREQUENCY]";
+const std::string usage = "Usage: syspect [-i REFRESH_INTERVAL | -f REFRESH_FREQUENCY] [-h] [--help] [-?]";
 
 pgm::arguments::arguments(int argc, char **argv, error &error) {
 	for (int i = 1; i < argc; i++) {
@@ -12,6 +12,12 @@ pgm::arguments::arguments(int argc, char **argv, error &error) {
 
 		// refresh interval
 		if (arg_string == "-i") {
+			// Assert that there is an argument specified before referencing argv[++i].
+			if (i >= argc - 1) {
+				error.append("-i specified but no interval provided.");
+				break;
+			}
+			// parse argument
 			std::string interval_string(argv[++i]);
 			try {
 				this->refresh_interval = std::stoi(interval_string);
@@ -23,6 +29,12 @@ pgm::arguments::arguments(int argc, char **argv, error &error) {
 
 		// refresh frequency
 		if (arg_string == "-f") {
+			// Assert that there is an argument specified before referencing argv[++i].
+			if (i >= argc - 1) {
+				error.append("-f specified but no frequency provided.");
+				break;
+			}
+			// parse argument
 			std::string frequency_string(argv[++i]);
 			int frequency = 0;
 			try {
@@ -34,8 +46,15 @@ pgm::arguments::arguments(int argc, char **argv, error &error) {
 			continue;
 		}
 
-		std::cout << i << arg_string << usage << std::endl;
+		// help
+		// We print usage if an unrecognised argument is used anyway so there's no point in checking for "-h" etc.
+		// Would be nice to set error codes appropriately but it's unnecessary for this more human oriented tool.
+		std::cout << usage << std::endl;
 		printed_usage = true;
 		break;
+	}
+	
+	if (error) {
+		error.append("Error parsing arguments.");
 	}
 }
