@@ -10,35 +10,58 @@
 #include "arguments.hpp"
 
 namespace pgm {
+	struct cpu_idle {
+		long long previous_microseconds = 0;
+		std::vector<std::ifstream> streams;
+	};
+
 	// Get ifstreams for each of "/sys/devices/system/cpu/cpu*/cpuidle/state*/time".
 	// Returns a 2D vector of cpus * states.
-	std::vector<std::vector<std::ifstream>> get_cpu_idle_streams(pgm::error &error) {
+	std::vector<cpu_idle>
+	get_cpu_idles(pgm::error &error) {
+		std::vector<cpu_idle> cpu_idles;
 		unsigned cpu_count = std::thread::hardware_concurrency();
-		std::vector<std::vector<std::ifstream>> cpus;
 		for (unsigned cpu_index = 0; cpu_index < cpu_count; cpu_index++) {
-			std::vector<std::ifstream> state_streams;
+			cpu_idle cpu_idle;
 			std::filesystem::directory_iterator idle_iterator(std::format("/sys/devices/system/cpu/cpu{}/cpuidle/", cpu_index));
 			for (const std::filesystem::directory_entry& entry: idle_iterator) {
+				// std::string name;
+				// std::ifstream(entry.path() / "name") >> name;
+				// std::cout << name << std::endl;
+				// if (name == "POLL" || name == "C1_ACPI" || name == "C2_ACPI" || name == "C3_ACPI") {
+				// 	continue;
+				// }
+
 				std::filesystem::path path(entry.path() / "time");
 				std::ifstream stream(path);
 				if (!stream.is_open()) {
 					error.append(std::format("Error opening file \"{}\"", path.string()));
 					break;
 				}
-				state_streams.push_back(std::move(stream));
+				cpu_idle.streams.push_back(std::move(stream));
 			}
 			if (error) {
 				break;
 			}
-			cpus.push_back(std::move(state_streams));
+			cpu_idles.push_back(std::move(cpu_idle));
 		}
+
 		if (error) {
 			error.append("Error getting streams for CPU idle time.");
 		}
-		return cpus;
+		// std::exit(6);
+		return cpu_idles;
 	}
 
-	void refresh(pgm::error &error) {
+	void
+	refresh(pgm::error &error) {
+		// Measure actual refresh interval.
+		std::chrono::time_point time = std::chrono::steady_clock::now();
+		static std::chrono::time_point previous_refresh_time = time;
+		std::chrono::duration refresh_interval = time - previous_refresh_time;
+		previous_refresh_time = time;
+		long long interval_microseconds = std::chrono::duration_cast<std::chrono::microseconds>(refresh_interval).count();
+
 		// Reset the screen.
 		std::cout
 			<< "\x1B[2J" // clear
@@ -64,32 +87,40 @@ namespace pgm {
 		uptime_ifstream.seekg(0);
 		float uptime;
 		uptime_ifstream >> uptime;
-		std::cout << "Uptime: " << std::fixed << std::setprecision(0) << uptime << "s (" << std::setprecision(5) << uptime / 86400 << "d)\n\n";
+		std::cout << "Uptime: " << std::fixed << std::setprecision(0) << uptime << "s (" << std::setprecision(5) << uptime / 86400 /*seconds per day*/ << "d)\n\n";
 
 		// CPU
 		std::cout << "CPUs: ";
 		static pgm::error static_error;
-		static std::vector<std::vector<std::ifstream>> cpus_idle_streams = get_cpu_idle_streams(static_error);
+		static std::vector<pgm::cpu_idle> cpu_idles = get_cpu_idles(static_error);
 		if (static_error) {
 			error = static_error;
 			return;
 		}
-		for (std::vector<std::ifstream> &cpu_idle_streams: cpus_idle_streams) {
-			long long cpu_idle_nanoseconds = 0;
-			for (std::ifstream &stream: cpu_idle_streams) {
+		// print usage for each cpu
+		for (cpu_idle &cpu_idle: cpu_idles) {
+			// Sum idle time of all states
+			long long idle_microseconds = 0;
+			for (std::ifstream &stream: cpu_idle.streams) {
 				stream.seekg(0);
-				long long state_nanoseconds;
-				stream >> state_nanoseconds;
-				cpu_idle_nanoseconds += state_nanoseconds;
+				long long state_idle_microseconds;
+				stream >> state_idle_microseconds;
+				idle_microseconds += state_idle_microseconds;
 			}
-			std::cout << cpu_idle_nanoseconds << " ";
+
+			long long delta_idle_microseconds = idle_microseconds - cpu_idle.previous_microseconds;
+			cpu_idle.previous_microseconds = idle_microseconds;
+
+			long long busy_microseconds = interval_microseconds - delta_idle_microseconds;
+			std::cout << idle_microseconds << "\n" << interval_microseconds << "\n" << delta_idle_microseconds << "\n" << busy_microseconds << "\n\n";
 		}
 
-		std::cout << std::endl; // also flushes
+		std::cout << std::endl; // also flushes the stream.
 	}
 }
 
-int main(int argc, char **argv) {
+int
+main(int argc, char **argv) {
 	pgm::error error;
 
 	// Parse Arguments
