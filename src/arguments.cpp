@@ -4,7 +4,7 @@
 #include <iostream>
 #include <format>
 
-const std::string usage = "Usage: syspect [-i REFRESH_INTERVAL | -f REFRESH_FREQUENCY] [-h] [--help] [-?]";
+const std::string usage = "Usage: syspect [-i REFRESH_INTERVAL_MS | -f REFRESH_FREQUENCY_HZ] [-h] [--help] [-?]";
 
 pgm::arguments::arguments(int argc, char **argv, error &error) {
 	for (int i = 1; i < argc; i++) {
@@ -20,7 +20,7 @@ pgm::arguments::arguments(int argc, char **argv, error &error) {
 			// parse argument
 			std::string interval_string(argv[++i]);
 			try {
-				this->refresh_interval = std::stoi(interval_string);
+				this->refresh_interval_ms = std::stoi(interval_string);
 			} catch (std::exception&) {
 				error.append(std::format("Error parsing refresh interval \"{}\". Is it a number?", interval_string));
 			}
@@ -42,7 +42,7 @@ pgm::arguments::arguments(int argc, char **argv, error &error) {
 			} catch (std::exception&) {
 				error.append(std::format("Error parsing refresh frequency \"{}\". Is it a number?", frequency_string));
 			}
-			this->refresh_interval = 1000 / frequency;
+			this->refresh_interval_ms = static_cast<int>(static_cast<float>(1000) / frequency);
 			continue;
 		}
 

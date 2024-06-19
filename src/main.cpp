@@ -5,56 +5,78 @@
 #include <ctime>
 #include <fstream>
 #include <format>
+#include <cstring>
+#include <vector>
+#include <array>
+
+#include <sys/syscall.h>
+#include <sys/ioctl.h>
+#include <linux/perf_event.h>
 
 #include "error.hpp"
 #include "arguments.hpp"
 
 namespace pgm {
-	struct cpu_idle {
-		long long previous_microseconds = 0;
-		std::vector<std::ifstream> streams;
+
+	struct cpu {
+		long long max_cycles;
+		long loaded_cycles_fd;
 	};
 
-	// Get ifstreams for each of "/sys/devices/system/cpu/cpu*/cpuidle/state*/time".
-	// Returns a 2D vector of cpus * states.
-	std::vector<cpu_idle>
-	get_cpu_idles(pgm::error &error) {
-		std::vector<cpu_idle> cpu_idles;
-		unsigned cpu_count = std::thread::hardware_concurrency();
-		for (unsigned cpu_index = 0; cpu_index < cpu_count; cpu_index++) {
-			cpu_idle cpu_idle;
-			std::filesystem::directory_iterator idle_iterator(std::format("/sys/devices/system/cpu/cpu{}/cpuidle/", cpu_index));
-			for (const std::filesystem::directory_entry& entry: idle_iterator) {
-				// std::string name;
-				// std::ifstream(entry.path() / "name") >> name;
-				// std::cout << name << std::endl;
-				// if (name == "POLL" || name == "C1_ACPI" || name == "C2_ACPI" || name == "C3_ACPI") {
-				// 	continue;
-				// }
+	std::vector<cpu>
+	get_cpus(int refresh_interval_ms, pgm::error &error) {
+		std::vector<cpu> cpus;
+		int cpu_count = static_cast<int>(std::thread::hardware_concurrency());
+		double intervals_per_second = 1e3 / refresh_interval_ms;
+		for (int cpu_index = 0; cpu_index < cpu_count; cpu_index++) {
+			cpu cpu;
 
-				std::filesystem::path path(entry.path() / "time");
-				std::ifstream stream(path);
-				if (!stream.is_open()) {
-					error.append(std::format("Error opening file \"{}\"", path.string()));
-					break;
-				}
-				cpu_idle.streams.push_back(std::move(stream));
-			}
-			if (error) {
+			// Get max cycles per second.
+			std::ifstream max_frequency_stream(std::format("/sys/devices/system/cpu/cpu{}/cpufreq/scaling_max_freq", cpu_index));
+			if (!max_frequency_stream.is_open()) {
+				error.append(std::format("Error opening max_freq file for cpu {}.", cpu_index));
 				break;
 			}
-			cpu_idles.push_back(std::move(cpu_idle));
+			long long thousand_cycles_per_second;
+			max_frequency_stream >> thousand_cycles_per_second;
+			// Convert to cycles per interval
+			long long cycles_per_second = thousand_cycles_per_second * 1000;
+			long long cycles_per_interval = static_cast<long long>(static_cast<float>(cycles_per_second) / intervals_per_second); // use float for good accuracy with unusual refresh_interval_ms like 400. This would otherwise round intervals_per_second and give a bad cpu.max_cycles.
+			cpu.max_cycles = cycles_per_interval;
+
+			// Get file descriptor for reading cycles used for all processes.
+			perf_event_attr pea = {}; // init to 0;
+			pea.type = PERF_TYPE_HARDWARE;
+			pea.size = sizeof(pea);
+			pea.config = PERF_COUNT_HW_CPU_CYCLES;
+			pea.disabled = 0;
+			// These should already be zeroed but explicit is nice and shows all the exclude options.
+			// pea.exclude_idle = 0; // Does not apply to PERF_TYPE_HARDWARE, only PERF_TYPE_SOFTWARE.
+			pea.exclude_user = 0;
+			pea.exclude_kernel = 0;
+			pea.exclude_hv = 0;
+			pea.exclude_host = 0;
+			pea.exclude_guest = 0;
+			pea.exclude_callchain_kernel = 0;
+			pea.exclude_callchain_user = 0;
+			cpu.loaded_cycles_fd = syscall(SYS_perf_event_open, &pea, -1, cpu_index, -1, 0);
+			if (cpu.loaded_cycles_fd == -1) {
+				error.strerror().append(std::format("Error getting file descriptor for cpu {} loaded cycle count.", cpu_index));
+				break;
+			}
+
+			cpus.push_back(cpu);
 		}
 
 		if (error) {
-			error.append("Error getting streams for CPU idle time.");
+			error.append("Error getting cpus.");
 		}
-		// std::exit(6);
-		return cpu_idles;
+
+		return cpus;
 	}
 
 	void
-	refresh(pgm::error &error) {
+	refresh(std::vector<pgm::cpu> &cpus, pgm::error &error) {
 		// Measure actual refresh interval.
 		std::chrono::time_point time = std::chrono::steady_clock::now();
 		static std::chrono::time_point previous_refresh_time = time;
@@ -91,28 +113,31 @@ namespace pgm {
 
 		// CPU
 		std::cout << "CPUs: ";
-		static pgm::error static_error;
-		static std::vector<pgm::cpu_idle> cpu_idles = get_cpu_idles(static_error);
-		if (static_error) {
-			error = static_error;
-			return;
-		}
 		// print usage for each cpu
-		for (cpu_idle &cpu_idle: cpu_idles) {
-			// Sum idle time of all states
-			long long idle_microseconds = 0;
-			for (std::ifstream &stream: cpu_idle.streams) {
-				stream.seekg(0);
-				long long state_idle_microseconds;
-				stream >> state_idle_microseconds;
-				idle_microseconds += state_idle_microseconds;
-			}
+		for (cpu &cpu: cpus) {
+			// Read cycle counts
+			long long loaded_cycles;
+			read(cpu.loaded_cycles_fd, &loaded_cycles, sizeof(loaded_cycles));
+			ioctl(cpu.loaded_cycles_fd, PERF_EVENT_IOC_RESET, 0); // Reset for the next refresh.
 
-			long long delta_idle_microseconds = idle_microseconds - cpu_idle.previous_microseconds;
-			cpu_idle.previous_microseconds = idle_microseconds;
+			// Find level character to print for cpu
+			// static const std::string levels = "_-^";
+			static const std::string levels = "_-^";
+			static const int max_level = levels.size() - 1;
+			long long level_index = loaded_cycles / (cpu.max_cycles / static_cast<long long>(levels.size()));
+			// Clamp level index to bounds.
+			if (level_index < 0) {level_index = 0;}
+			else if (level_index > max_level) {level_index = max_level;}
 
-			long long busy_microseconds = interval_microseconds - delta_idle_microseconds;
-			std::cout << idle_microseconds << "\n" << interval_microseconds << "\n" << delta_idle_microseconds << "\n" << busy_microseconds << "\n\n";
+			// long long percentage = loaded_cycles / (cpu.max_cycles / 100);
+			// Print usage level character
+			std::cout
+				// << std::setw(3) << percentage
+				<< levels[static_cast<std::string::size_type>(level_index)]
+				// << " "
+			;
+
+			// std::cout << cpu.max_cycles << "\n" << loaded_cycles << "\n" << percentage << "\n\n";
 		}
 
 		std::cout << std::endl; // also flushes the stream.
@@ -133,15 +158,21 @@ main(int argc, char **argv) {
 		return 0;
 	}
 
+	// Get CPU info and file descriptors
+	std::vector<pgm::cpu> cpus = get_cpus(arguments.refresh_interval_ms, error);
+	if (error) {
+		return error.print();
+	}
+
 	// Main Refresh Loop
-	const std::chrono::milliseconds refresh_interval(arguments.refresh_interval);
+	const std::chrono::milliseconds refresh_interval_ms(arguments.refresh_interval_ms);
 	std::chrono::time_point<std::chrono::steady_clock> next_refresh = std::chrono::steady_clock::now();
 	for (;;) {
-		refresh(error);
+		refresh(cpus, error);
 		if (error) {
 			return error.print();
 		}
-		next_refresh += refresh_interval;
+		next_refresh += refresh_interval_ms;
 		std::this_thread::sleep_until(next_refresh);
 	}
 
