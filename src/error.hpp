@@ -59,7 +59,7 @@ namespace pgm {
 		int
 		print() const;
 
-		// Constructs an error with message from errno in a thread safe way (using strerror_r instead of strerror).
+		// Appends message from errno in a thread safe way (using strerror_r instead of strerror).
 		error
 		strerror();
 	};
