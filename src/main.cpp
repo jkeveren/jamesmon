@@ -2,12 +2,13 @@
 #include <thread>
 #include <chrono>
 #include <filesystem>
-#include <ctime>
 #include <fstream>
+#include <sstream>
 #include <format>
-#include <cstring>
 #include <vector>
-#include <array>
+
+#include <ctime>
+#include <cstring>
 
 #include <sys/syscall.h>
 #include <sys/ioctl.h>
@@ -25,10 +26,12 @@ namespace pgm {
 
 	std::vector<cpu>
 	get_cpus(int refresh_interval_ms, pgm::error &error) {
-		std::vector<cpu> cpus;
-		int cpu_count = static_cast<int>(std::thread::hardware_concurrency());
 		double intervals_per_second = 1e3 / refresh_interval_ms;
-		for (int cpu_index = 0; cpu_index < cpu_count; cpu_index++) {
+		unsigned cpu_count = std::thread::hardware_concurrency();
+		std::vector<cpu> cpus;
+		cpus.reserve(cpu_count);
+
+		for (unsigned cpu_index = 0; cpu_index < cpu_count; cpu_index++) {
 			cpu cpu;
 
 			// Get max cycles per second.
@@ -59,7 +62,7 @@ namespace pgm {
 			pea.exclude_guest = 0;
 			pea.exclude_callchain_kernel = 0;
 			pea.exclude_callchain_user = 0;
-			cpu.loaded_cycles_fd = syscall(SYS_perf_event_open, &pea, -1, cpu_index, -1, 0);
+			cpu.loaded_cycles_fd = syscall(SYS_perf_event_open, &pea, -1, static_cast<int>(cpu_index), -1, 0);
 			if (cpu.loaded_cycles_fd == -1) {
 				error.strerror().append(std::format("Error getting file descriptor for cpu {} loaded cycle count.", cpu_index));
 				break;
@@ -129,13 +132,8 @@ namespace pgm {
 			if (level_index < 0) {level_index = 0;}
 			else if (level_index > max_level) {level_index = max_level;}
 
-			// long long percentage = loaded_cycles / (cpu.max_cycles / 100);
 			// Print usage level character
-			std::cout
-				// << std::setw(3) << percentage
-				<< levels[static_cast<std::string::size_type>(level_index)]
-				// << " "
-			;
+			std::cout << levels[static_cast<std::string::size_type>(level_index)];
 
 			// std::cout << cpu.max_cycles << "\n" << loaded_cycles << "\n" << percentage << "\n\n";
 		}

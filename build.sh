@@ -13,4 +13,4 @@ cromple \
 -Wno-error=unused-result \
 -Wno-error=unused-variable \
 -Wno-error=unused-value \
--o bin/syspect
+-o bin/jamesmon

@@ -4,7 +4,7 @@
 #include <iostream>
 #include <format>
 
-const std::string usage = "Usage: syspect [-i REFRESH_INTERVAL_MS | -f REFRESH_FREQUENCY_HZ] [-h] [--help] [-?]";
+const std::string usage = "Usage: jamesmon [-i REFRESH_INTERVAL_MS | -f REFRESH_FREQUENCY_HZ] [-h] [--help] [-?]";
 
 pgm::arguments::arguments(int argc, char **argv, error &error) {
 	for (int i = 1; i < argc; i++) {
