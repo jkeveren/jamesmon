@@ -87,14 +87,16 @@ namespace pgm {
 		previous_refresh_time = time;
 		long long interval_microseconds = std::chrono::duration_cast<std::chrono::microseconds>(refresh_interval).count();
 
+		std::stringstream output;
+
 		// Reset the screen.
-		std::cout
+		output
 			<< "\x1B[2J" // clear
 			"\x1B[H" // move to 0,0
 		;
 
 		// Timestamps
-		std::cout
+		output
 			<< "TAI:  " << std::chrono::tai_clock::now().time_since_epoch() << "\n"
 			<< "UNIX: " << std::chrono::utc_clock::now().time_since_epoch() << "\n"
 			"\n"
@@ -105,17 +107,17 @@ namespace pgm {
 		std::tm *tm = std::localtime(&ctime);
 		char local_time[50];
 		std::strftime(local_time, sizeof(local_time) * sizeof(local_time[0]), "%F %b %a %T", tm);
-		std::cout << local_time << "\n\n";
+		output << local_time << "\n\n";
 
 		// Uptime
 		static std::ifstream uptime_ifstream("/proc/uptime");
 		uptime_ifstream.seekg(0);
 		float uptime;
 		uptime_ifstream >> uptime;
-		std::cout << "Uptime: " << std::fixed << std::setprecision(0) << uptime << "s (" << std::setprecision(5) << uptime / 86400 /*seconds per day*/ << "d)\n\n";
+		output << "Uptime: " << std::fixed << std::setprecision(0) << uptime << "s (" << std::setprecision(5) << uptime / 86400 /*seconds per day*/ << "d)\n\n";
 
 		// CPU
-		std::cout << "CPUs: ";
+		output << "CPUs: ";
 		// print usage for each cpu
 		for (cpu &cpu: cpus) {
 			// Read cycle counts
@@ -133,12 +135,12 @@ namespace pgm {
 			else if (level_index > max_level) {level_index = max_level;}
 
 			// Print usage level character
-			std::cout << levels[static_cast<std::string::size_type>(level_index)];
-
-			// std::cout << cpu.max_cycles << "\n" << loaded_cycles << "\n" << percentage << "\n\n";
+			output << levels[static_cast<std::string::size_type>(level_index)];
 		}
 
-		std::cout << std::endl; // also flushes the stream.
+		output << "\n";
+
+		std::cout << output.rdbuf() << std::flush;
 	}
 }
 
