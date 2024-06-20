@@ -24,6 +24,29 @@
 
 namespace pgm {
 
+	void insert_time_info(std::stringstream &output, [[maybe_unused]] pgm::error &error) {
+		// Timestamps
+		output
+			<< "TAI:  " << std::chrono::tai_clock::now().time_since_epoch() << "\n"
+			<< "UNIX: " << std::chrono::utc_clock::now().time_since_epoch() << "\n"
+			"\n"
+		;
+
+		// Local Time
+		std::time_t ctime = std::time(nullptr);
+		std::tm *tm = std::localtime(&ctime);
+		char local_time[50];
+		std::strftime(local_time, sizeof(local_time) * sizeof(local_time[0]), "%F %b %a %T", tm);
+		output << local_time << "\n\n";
+
+		// Uptime
+		static std::ifstream uptime_ifstream("/proc/uptime");
+		uptime_ifstream.seekg(0);
+		float uptime;
+		uptime_ifstream >> uptime;
+		output << "Uptime: " << std::fixed << std::setprecision(0) << uptime << "s (" << std::setprecision(5) << uptime / 86400 /*seconds per day*/ << "d)\n\n";
+	}
+
 	struct cpu {
 		long long max_cycles;
 		long loaded_cycles_fd;
@@ -100,8 +123,10 @@ namespace pgm {
 			static pgm::error static_error;
 			static std::vector<pgm::cpu> cpus = get_cpus(refresh_interval, static_error);
 			if (static_error) {
+				error = static_error;
 				break;
 			}
+
 
 			output << "CPUs: ";
 			// print usage for each cpu
@@ -248,30 +273,15 @@ namespace pgm {
 
 			// Reset the screen.
 			output
-				<< "\x1B[2J" // clear
-				"\x1B[H" // move to 0,0
+				<< "\x1B[H" // move to 0,0
+				"\x1B[2J" // clear
 			;
 
-			// Timestamps
-			output
-				<< "TAI:  " << std::chrono::tai_clock::now().time_since_epoch() << "\n"
-				<< "UNIX: " << std::chrono::utc_clock::now().time_since_epoch() << "\n"
-				"\n"
-			;
-
-			// Local Time
-			std::time_t ctime = std::time(nullptr);
-			std::tm *tm = std::localtime(&ctime);
-			char local_time[50];
-			std::strftime(local_time, sizeof(local_time) * sizeof(local_time[0]), "%F %b %a %T", tm);
-			output << local_time << "\n\n";
-
-			// Uptime
-			static std::ifstream uptime_ifstream("/proc/uptime");
-			uptime_ifstream.seekg(0);
-			float uptime;
-			uptime_ifstream >> uptime;
-			output << "Uptime: " << std::fixed << std::setprecision(0) << uptime << "s (" << std::setprecision(5) << uptime / 86400 /*seconds per day*/ << "d)\n\n";
+			// Time
+			insert_time_info(output, error);
+			if (error) {
+				break;
+			}
 
 			// CPU
 			insert_cpu_info(refresh_interval, output, error);
