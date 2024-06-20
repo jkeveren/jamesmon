@@ -30,11 +30,11 @@ namespace pgm {
 	};
 
 	std::vector<cpu>
-	get_cpus(int refresh_interval_ms, pgm::error &error) {
+	get_cpus(const std::chrono::duration<float> &refresh_interval, pgm::error &error) {
 		std::vector<cpu> cpus;
 
 		do {
-			double intervals_per_second = 1e3 / refresh_interval_ms;
+			double refresh_frequency = std::chrono::duration<float>(1) / refresh_interval;
 			int cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
 			if (cpu_count == -1) {
 				error.strerror().append("Error making sysconf call to get bumber of cpus.");
@@ -55,7 +55,7 @@ namespace pgm {
 				max_frequency_stream >> thousand_cycles_per_second;
 				// Convert to cycles per interval
 				long long cycles_per_second = thousand_cycles_per_second * 1000;
-				long long cycles_per_interval = static_cast<long long>(static_cast<float>(cycles_per_second) / intervals_per_second); // use float for good accuracy with unusual refresh_interval_ms like 400. This would otherwise round intervals_per_second and give a bad cpu.max_cycles.
+				long long cycles_per_interval = static_cast<long long>(static_cast<float>(cycles_per_second) / refresh_frequency); // use float for good accuracy with unusual refresh_interval_ms like 400. This would otherwise round intervals_per_second and give a bad cpu.max_cycles.
 				cpu.max_cycles = cycles_per_interval;
 
 				// Get file descriptor for reading cycles used for all processes.
@@ -92,6 +92,43 @@ namespace pgm {
 		}
 
 		return cpus;
+	}
+
+	void insert_cpu_info(const std::chrono::duration<float> &refresh_interval, std::stringstream &output, pgm::error &error) {
+		do {
+			// Get CPU info and file descriptors
+			static pgm::error static_error;
+			static std::vector<pgm::cpu> cpus = get_cpus(refresh_interval, static_error);
+			if (static_error) {
+				break;
+			}
+
+			output << "CPUs: ";
+			// print usage for each cpu
+			for (cpu &cpu: cpus) {
+				// Read cycle counts
+				long long loaded_cycles;
+				read(cpu.loaded_cycles_fd, &loaded_cycles, sizeof(loaded_cycles));
+				ioctl(cpu.loaded_cycles_fd, PERF_EVENT_IOC_RESET, 0); // Reset for the next refresh.
+
+				// Find level character to print for cpu
+				// static const std::string levels = "_-^";
+				static const std::string levels = "_-^";
+				static const int max_level = levels.size() - 1;
+				long long level_index = loaded_cycles / (cpu.max_cycles / static_cast<long long>(levels.size()));
+				// Clamp level index to bounds.
+				if (level_index < 0) {level_index = 0;}
+				else if (level_index > max_level) {level_index = max_level;}
+
+				// Print usage level character
+				output << levels[static_cast<std::string::size_type>(level_index)];
+			}
+			output << "\n\n";
+		} while (false);
+
+		if (error) {
+			error.append("Error inserting cpu info.");
+		}
 	}
 
 	void insert_memory_info(std::stringstream &output, pgm::error &error) {
@@ -199,12 +236,12 @@ namespace pgm {
 		} while (false);
 
 		if (error) {
-			error.append("Error getting memory info.");
+			error.append("Error inserting memory info.");
 		}
 	}
 
 	void
-	refresh(std::vector<pgm::cpu> &cpus, pgm::error &error) {
+	refresh(const std::chrono::duration<float> &refresh_interval, pgm::error &error) {
 		do {
 			// Use a stringstream instead of printing directly to cout so lines are ensured to be printed at the same time. This avoids flickering.
 			std::stringstream output;
@@ -237,27 +274,10 @@ namespace pgm {
 			output << "Uptime: " << std::fixed << std::setprecision(0) << uptime << "s (" << std::setprecision(5) << uptime / 86400 /*seconds per day*/ << "d)\n\n";
 
 			// CPU
-			output << "CPUs: ";
-			// print usage for each cpu
-			for (cpu &cpu: cpus) {
-				// Read cycle counts
-				long long loaded_cycles;
-				read(cpu.loaded_cycles_fd, &loaded_cycles, sizeof(loaded_cycles));
-				ioctl(cpu.loaded_cycles_fd, PERF_EVENT_IOC_RESET, 0); // Reset for the next refresh.
-
-				// Find level character to print for cpu
-				// static const std::string levels = "_-^";
-				static const std::string levels = "_-^";
-				static const int max_level = levels.size() - 1;
-				long long level_index = loaded_cycles / (cpu.max_cycles / static_cast<long long>(levels.size()));
-				// Clamp level index to bounds.
-				if (level_index < 0) {level_index = 0;}
-				else if (level_index > max_level) {level_index = max_level;}
-
-				// Print usage level character
-				output << levels[static_cast<std::string::size_type>(level_index)];
+			insert_cpu_info(refresh_interval, output, error);
+			if (error) {
+				break;
 			}
-			output << "\n\n";
 
 			// Memory
 			insert_memory_info(output, error);
@@ -288,21 +308,14 @@ main(int argc, char **argv) {
 		return 0;
 	}
 
-	// Get CPU info and file descriptors
-	std::vector<pgm::cpu> cpus = get_cpus(arguments.refresh_interval_ms, error);
-	if (error) {
-		return error.print();
-	}
-
 	// Main Refresh Loop
-	const std::chrono::milliseconds refresh_interval_ms(arguments.refresh_interval_ms);
-	std::chrono::time_point<std::chrono::steady_clock> next_refresh = std::chrono::steady_clock::now();
+	std::chrono::time_point<std::chrono::steady_clock, std::chrono::duration<float>> next_refresh = std::chrono::steady_clock::now();
 	for (;;) {
-		refresh(cpus, error);
+		refresh(arguments.refresh_interval, error);
 		if (error) {
 			return error.print();
 		}
-		next_refresh += refresh_interval_ms;
+		next_refresh += arguments.refresh_interval;
 		std::this_thread::sleep_until(next_refresh);
 	}
 

@@ -1,10 +1,12 @@
 #include "error.hpp"
 
+#include <chrono>
+
 namespace pgm {	
 	class arguments {
 		public:
 		bool printed_usage = false;
-		int refresh_interval_ms = 16; // ms // defaults to 16 == 1000/60 for 60hz display which is most common.
+		std::chrono::duration<float> refresh_interval = std::chrono::duration<float>(1) / 60;
 
 		arguments(int argc, char **argv, error &error);
 	};

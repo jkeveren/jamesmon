@@ -4,7 +4,7 @@
 #include <iostream>
 #include <format>
 
-const std::string usage = "Usage: jamesmon [-i REFRESH_INTERVAL_MS | -f REFRESH_FREQUENCY_HZ] [-h] [--help] [-?]";
+const std::string usage = "Usage: jamesmon [-i REFRESH_INTERVAL_S | -f REFRESH_FREQUENCY_HZ] [-h] [--help] [-?]";
 
 pgm::arguments::arguments(int argc, char **argv, error &error) {
 	for (int i = 1; i < argc; i++) {
@@ -19,11 +19,13 @@ pgm::arguments::arguments(int argc, char **argv, error &error) {
 			}
 			// parse argument
 			std::string interval_string(argv[++i]);
+			float interval; // seconds
 			try {
-				this->refresh_interval_ms = std::stoi(interval_string);
+				interval = std::stof(interval_string);
 			} catch (std::exception&) {
 				error.append(std::format("Error parsing refresh interval \"{}\". Is it a number?", interval_string));
 			}
+			refresh_interval = std::chrono::duration<float>(interval);
 			continue;
 		}
 
@@ -36,13 +38,13 @@ pgm::arguments::arguments(int argc, char **argv, error &error) {
 			}
 			// parse argument
 			std::string frequency_string(argv[++i]);
-			int frequency = 0;
+			float frequency;
 			try {
-				frequency = std::stoi(frequency_string);
+				frequency = std::stof(frequency_string);
 			} catch (std::exception&) {
 				error.append(std::format("Error parsing refresh frequency \"{}\". Is it a number?", frequency_string));
 			}
-			this->refresh_interval_ms = static_cast<int>(static_cast<float>(1000) / frequency);
+			refresh_interval = std::chrono::duration<float>(1) / frequency;
 			continue;
 		}
 
