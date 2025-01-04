@@ -344,10 +344,10 @@ namespace pgm {
 			}
 
 			// Battery
-			insert_power_info(output, error);
-			if (error) {
-				break;
-			}
+//			insert_power_info(output, error);
+//			if (error) {
+//				break;
+//			}
 
 			std::cout << output.rdbuf() << std::flush;
 		} while (false);
