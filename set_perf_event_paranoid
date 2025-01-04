@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 # https://docs.kernel.org/admin-guide/sysctl/kernel.html#perf-event-paranoid
 
 sudo bash -c "echo 0 > /proc/sys/kernel/perf_event_paranoid"

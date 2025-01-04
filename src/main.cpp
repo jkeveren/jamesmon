@@ -172,14 +172,14 @@ namespace pgm {
 			// Read /proc/meminfo in one chunk to avoid tearing.
 			char meminfo[2000];
 			lseek(meminfo_fd, 0, SEEK_SET);
-			ssize_t n = read(meminfo_fd, meminfo, sizeof(meminfo));
+			::ssize_t n = ::read(meminfo_fd, meminfo, sizeof(meminfo));
 			if (n == -1) {
 				error.strerror().append("Error reading /proc/meminfo.");
 				break;
 			}
 			int meminfo_length = strlen(meminfo);
 
-			// Parse specific values form meminfo.
+			// Parse specific values from /proc/meminfo.
 			// Yes I could have done this with scanf of whatever but this is a personal project and sometimes I like to chase imaginary efficiency that I don't need.
 			bool reading_key = true;
 			bool ignore_rest_of_line = false;
@@ -214,7 +214,7 @@ namespace pgm {
 					continue;
 				}
 
-				// if the rest of the line if not useful
+				// if the rest of the line is not useful
 				if (ignore_rest_of_line) {
 					// this will not run forever because of the previous if statement
 					continue;
@@ -255,13 +255,61 @@ namespace pgm {
 				<< std::fixed << std::setprecision(3)
 				<< mem_unavailable / 1e9 << '/' << std::setprecision(1) << mem_total / 1e9 << "GB "
 				<< mem_unavailable / (mem_total / 100) << "% "
-				<< "\n"
+				<< "\n\n"
 			;
 
 		} while (false);
 
 		if (error) {
 			error.append("Error inserting memory info.");
+		}
+	}
+	
+	void
+	insert_power_info(std::stringstream &output, pgm::error &error) {
+		do {
+			std::filesystem::directory_iterator power_supply_entries("/sys/class/power_supply");
+
+			for (const std::filesystem::directory_entry &entry : power_supply_entries) {
+				// Ignore entries that are not directories (should be none but who knows?).
+				if (!entry.is_directory()) {
+					continue;
+				}
+
+				// Get power supply type
+				// Open type file for power supply.
+				int type_fd = ::open((entry.path() / "type").c_str(), O_RDONLY);
+				if (type_fd == -1) {
+					error.strerror();
+					break;
+				}
+
+				// Read type file
+				constexpr ::size_t count = 30;
+				char buffer[count];
+				::ssize_t read_size = ::read(type_fd, buffer, count);
+				if (read_size == -1) {
+					error.strerror();
+					break;
+				}
+				::close(type_fd);
+				buffer[read_size] = 0; // null terminate.
+//				output << std::string(buffer);
+
+				if (strcmp(buffer, "Mains\n") == 0) {
+					output << "So many volts!" << std::endl;
+				} else if (strcmp(buffer, "Battery\n") == 0) {
+					output << "BADDERY!" << std::endl;
+				}
+			}
+
+			if (error) {
+				break;
+			}
+		} while (false);
+
+		if (error) {
+			error.append("Error inserting battery info.");
 		}
 	}
 
@@ -291,6 +339,12 @@ namespace pgm {
 
 			// Memory
 			insert_memory_info(output, error);
+			if (error) {
+				break;
+			}
+
+			// Battery
+			insert_power_info(output, error);
 			if (error) {
 				break;
 			}
