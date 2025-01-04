@@ -1,4 +1,6 @@
-#https://github.com/jkeveren/jamesmon
+#!/bin/bash
+
+#https://github.com/jkeveren/cromple
 cromple \
 -g \
 -std=c++20 \
@@ -17,4 +19,3 @@ cromple \
 -Wno-error=unused-value \
 -o bin/jamesmon
 
-# sudo setcap "cap_perfmon=pe" bin/jamesmon
