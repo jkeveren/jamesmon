@@ -2,17 +2,22 @@ jamesmon
 
 System monitor written by James. What a creative name!
 
-Building:
-	This depends on cromple (https://github.com/jkeveren/cromple) for compilation management.
-	Run "./build";
+Installation
+1. Follow the build steps.
+2. Run "./install" (requires password so read it first. It's like 2 lines).
 
-Installation:
-	Follow the build instructions and then run "./install" (requires password so read it first. It's like 2 lines).
+Building
+1. This depends on cromple (https://github.com/jkeveren/cromple) for compilation management so get that first.
+2. Run "./build";
 
-Devlopment:
-	Run "./set_perf_event_paranoid" to allow the program access to "perf_event_open(2)" without setcap which requires root.
-	Run "./watch" to build and run the program when files change.
-	The "perf_event_paranoid" solution is not ideal but is better that trying to use sudo to setcap after each build. There is no nice way of getting around the sudo password prompt without drawbacks that are worse than perf_event_paranoid=0 in my opinion.
-	To undo "./set_perf_event_paranoid", run "./reset_perf_event_paranoid" or just wait until you reboot next because perf_event_paranoid is not persistant.
-	The "./install" script sets linux capabilities on the executable after copying it so you don't need all this "per_event_paranoid" rubbish for typical usage.
+Devlopment
+1. Run "./set_perf_event_paranoid" to allow the program access to "perf_event_open(2)" without setcap which requires root.
+2. Run "./watch" to build and run the program when files change.
+3. The "perf_event_paranoid" solution is not ideal but is better that trying to use sudo to setcap after each build. There is no nice way of getting around the sudo password prompt without drawbacks that are worse than perf_event_paranoid=0 in my opinion.
+- To undo "./set_perf_event_paranoid", run "./reset_perf_event_paranoid" or just wait until you reboot next because perf_event_paranoid is not persistant.
+- The "./install" script sets linux capabilities on the executable after copying it so you don't need all this "per_event_paranoid" rubbish for typical usage.
 
+Possible Future Features
+- Fan speeds
+- IRQ
+- GPU
